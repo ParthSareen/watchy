@@ -1,4 +1,5 @@
-# watchy
+# watchy 👀
+
 
 Background task manager with a TUI and an LLM agent that can read logs, run diagnostics, and start/stop tasks on your behalf.
 
