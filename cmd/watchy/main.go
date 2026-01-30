@@ -32,28 +32,39 @@ func main() {
 	// Sync task statuses on startup
 	mgr.SyncTaskStatus()
 
-	cmd := ""
-	if len(os.Args) >= 2 {
-		cmd = os.Args[1]
+	// Parse global --model flag
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--model" && i+1 < len(args) {
+			cfg.Model = args[i+1]
+			args = append(args[:i], args[i+2:]...)
+			break
+		}
 	}
 
+	cmd := ""
+	if len(args) >= 1 {
+		cmd = args[0]
+	}
+
+	subArgs := args[1:]
 	switch cmd {
 	case "start":
-		cmdStart(mgr, os.Args[2:])
+		cmdStart(mgr, subArgs)
 	case "stop":
-		cmdStop(mgr, os.Args[2:])
+		cmdStop(mgr, subArgs)
 	case "list":
 		cmdList(mgr)
 	case "logs":
-		cmdLogs(mgr, os.Args[2:])
+		cmdLogs(mgr, subArgs)
 	case "ask":
-		cmdAsk(mgr, cfg, os.Args[2:])
+		cmdAsk(mgr, cfg, subArgs)
 	case "cleanup":
 		cmdCleanup(mgr, cfg)
 	case "":
 		cmdTUI(mgr, cfg)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
 		os.Exit(1)
 	}

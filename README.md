@@ -10,7 +10,10 @@ Uses Ollama for local inference. The agent sees all your tasks and their log fil
 go install github.com/parth/watchy/cmd/watchy@latest
 ```
 
-Requires [Ollama](https://ollama.com) running locally with `glm-4.7:cloud` pulled.
+Requires [Ollama](https://ollama.com). Recommended models:
+
+- `glm-4.7:cloud` -- default, runs via Ollama cloud
+- `glm-4.7-flash` -- runs fully local
 
 ## Usage
 
@@ -18,6 +21,7 @@ Run `watchy` to open the TUI. Left pane shows tasks, right pane shows logs or ch
 
 ```
 watchy                              # launch TUI
+watchy --model llama3.1:8b          # launch TUI with a different model
 watchy start 'make serve'           # start a background task
 watchy start 'npm test' --name ci   # start with a custom name
 watchy stop 3                       # stop task 3
@@ -26,6 +30,8 @@ watchy logs 3 -n 100                # last 100 lines of task 3
 watchy ask 3 "any errors?"          # ask the agent about task 3
 watchy cleanup                      # remove old finished tasks
 ```
+
+The `--model` flag works with any command.
 
 ## TUI keybindings
 
@@ -41,6 +47,13 @@ ctrl+c      quit (works even in chat input)
 ```
 
 The chat pane shows tool calls as they happen -- you see what the agent is doing before it executes. You can ask follow-up questions; the conversation persists for the session.
+
+## Chat commands
+
+```
+/model              show current model
+/model llama3.1:8b  switch model mid-session
+```
 
 ## Agent tools
 
@@ -62,5 +75,7 @@ Optional config at `~/.watchy/config.yaml`:
 retention_days: 7
 model: "glm-4.7:cloud"
 ```
+
+You can also set the model per-session with `--model` or `/model` in chat. Config file values are used as defaults.
 
 Data lives in `~/.watchy/` (SQLite db + log files).

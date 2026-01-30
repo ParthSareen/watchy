@@ -56,6 +56,16 @@ type ToolResultEvent struct {
 	Result string
 }
 
+// SetModel changes the model used for inference
+func (a *Agent) SetModel(model string) {
+	a.model = model
+}
+
+// Model returns the current model name
+func (a *Agent) Model() string {
+	return a.model
+}
+
 // Conversation holds persistent chat state
 type Conversation struct {
 	agent    *Agent

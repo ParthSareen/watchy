@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -131,6 +132,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			text := m.chatInput.Value()
 			if text != "" {
 				m.chatInput.Reset()
+
+				// Handle /model command
+				if strings.HasPrefix(text, "/model") {
+					parts := strings.Fields(text)
+					if len(parts) == 1 {
+						m.chatHistory = append(m.chatHistory, chatMessage{
+							role: "agent", content: "current model: " + m.agent.Model(),
+						})
+					} else {
+						newModel := parts[1]
+						m.agent.SetModel(newModel)
+						m.chatHistory = append(m.chatHistory, chatMessage{
+							role: "agent", content: "model set to: " + newModel,
+						})
+					}
+					m.updateChatViewport()
+					return m, nil
+				}
+
 				m.chatHistory = append(m.chatHistory, chatMessage{role: "user", content: text})
 				m.updateChatViewport()
 				m.agentBusy = true
