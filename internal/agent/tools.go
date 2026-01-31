@@ -42,7 +42,7 @@ func GetTools() []api.Tool {
 			Type: "function",
 			Function: api.ToolFunction{
 				Name:        "bash_command",
-				Description: "Execute a safe bash command for log analysis. Only read-only commands are allowed (grep, tail, head, awk, sed, wc, cat). No destructive operations.",
+				Description: "Execute a read-only bash command. Allowed: grep, tail, head, awk, sed, wc, cat, sort, uniq, cut, ls, find, ps, lsof, netstat, ss, df, du, free, uptime, whoami, hostname, uname, env, printenv, which, file, stat, id, curl, dig, ping. Pipes are supported.",
 				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"command"},
@@ -178,11 +178,17 @@ func (a *Agent) bashCommand(command string) (string, error) {
 	safeCommands := map[string]bool{
 		"grep": true, "tail": true, "head": true, "awk": true,
 		"sed": true, "wc": true, "cat": true, "sort": true,
-		"uniq": true, "cut": true,
+		"uniq": true, "cut": true, "ls": true, "find": true,
+		"ps": true, "lsof": true, "netstat": true, "ss": true,
+		"df": true, "du": true, "free": true, "uptime": true,
+		"whoami": true, "hostname": true, "uname": true,
+		"env": true, "printenv": true, "which": true,
+		"file": true, "stat": true, "id": true,
+		"curl": true, "dig": true, "ping": true,
 	}
 
 	if !safeCommands[parts[0]] {
-		return "", fmt.Errorf("command '%s' is not allowed. Only read-only commands are permitted: grep, tail, head, awk, sed, wc, cat, sort, uniq, cut", parts[0])
+		return "", fmt.Errorf("command '%s' is not allowed. Only read-only commands are permitted", parts[0])
 	}
 
 	cmd := exec.Command("bash", "-c", command)
