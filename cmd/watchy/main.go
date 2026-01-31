@@ -47,7 +47,10 @@ func main() {
 		cmd = args[0]
 	}
 
-	subArgs := args[1:]
+	var subArgs []string
+	if len(args) > 1 {
+		subArgs = args[1:]
+	}
 	switch cmd {
 	case "start":
 		cmdStart(mgr, subArgs)
