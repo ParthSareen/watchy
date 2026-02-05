@@ -205,6 +205,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePane = paneLeft
 			m.chatInput.Blur()
 		}
+	case "t":
+		m.themeIdx = (m.themeIdx + 1) % len(themes)
 	case "h":
 		m.leftHidden = !m.leftHidden
 		m.recalcLayout()

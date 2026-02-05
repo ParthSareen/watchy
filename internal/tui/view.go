@@ -7,25 +7,30 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+type theme struct {
+	name   string
+	bright lipgloss.Color
+	dim    lipgloss.Color
+}
+
+var themes = []theme{
+	{"green", lipgloss.Color("46"), lipgloss.Color("22")},
+	{"blue", lipgloss.Color("39"), lipgloss.Color("24")},
+	{"purple", lipgloss.Color("141"), lipgloss.Color("54")},
+	{"orange", lipgloss.Color("208"), lipgloss.Color("94")},
+	{"pink", lipgloss.Color("205"), lipgloss.Color("125")},
+	{"cyan", lipgloss.Color("51"), lipgloss.Color("30")},
+	{"red", lipgloss.Color("196"), lipgloss.Color("88")},
+}
+
 var (
-	green     = lipgloss.Color("34")
-	brightGreen = lipgloss.Color("46")
-	dimGreen  = lipgloss.Color("22")
-	red       = lipgloss.Color("124")
-	dim       = lipgloss.Color("240")
-
-	borderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(dim))
-
-	activeBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(brightGreen)
-
-	selectedStyle = lipgloss.NewStyle().Background(dimGreen).Bold(true).Foreground(brightGreen)
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(brightGreen)
-	dimStyle      = lipgloss.NewStyle().Foreground(dim)
+	errorColor = lipgloss.Color("124")
+	dimGray    = lipgloss.Color("240")
 )
+
+func (m Model) theme() theme {
+	return themes[m.themeIdx%len(themes)]
+}
 
 func (m Model) View() string {
 	if m.width == 0 {
@@ -76,10 +81,15 @@ func (m Model) View() string {
 }
 
 func (m Model) applyBorder(p pane, width, height int, title, content string) string {
-	style := borderStyle
+	t := m.theme()
+	borderColor := dimGray
 	if m.activePane == p {
-		style = activeBorderStyle
+		borderColor = t.bright
 	}
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(t.bright)
 	return style.
 		Width(width).
 		Height(height).
@@ -87,23 +97,26 @@ func (m Model) applyBorder(p pane, width, height int, title, content string) str
 }
 
 func (m Model) renderTaskList(width, height int) string {
+	t := m.theme()
+	dimStyle := lipgloss.NewStyle().Foreground(dimGray)
+
 	if len(m.tasks) == 0 {
 		return dimStyle.Render("No tasks. Use chat to start one.")
 	}
 
 	var lines []string
-	for i, t := range m.tasks {
+	for i, task := range m.tasks {
 		var indicator string
-		switch t.Status {
+		switch task.Status {
 		case "running":
-			indicator = lipgloss.NewStyle().Foreground(brightGreen).Render("[R]")
+			indicator = lipgloss.NewStyle().Foreground(t.bright).Render("[R]")
 		case "crashed":
-			indicator = lipgloss.NewStyle().Foreground(red).Render("[X]")
+			indicator = lipgloss.NewStyle().Foreground(errorColor).Render("[X]")
 		default:
-			indicator = lipgloss.NewStyle().Foreground(dim).Render("[-]")
+			indicator = dimStyle.Render("[-]")
 		}
 
-		name := t.Name
+		name := task.Name
 		maxName := width - 10
 		if maxName < 10 {
 			maxName = 10
@@ -112,9 +125,10 @@ func (m Model) renderTaskList(width, height int) string {
 			name = name[:maxName-3] + "..."
 		}
 
-		line := fmt.Sprintf(" %s %-3d %s", indicator, t.ID, name)
+		line := fmt.Sprintf(" %s %-3d %s", indicator, task.ID, name)
 
 		if i == m.selectedIdx {
+			selectedStyle := lipgloss.NewStyle().Background(t.dim).Bold(true).Foreground(t.bright)
 			line = selectedStyle.Render(line)
 		}
 
@@ -125,13 +139,16 @@ func (m Model) renderTaskList(width, height int) string {
 }
 
 func (m Model) renderStatusBar() string {
+	t := m.theme()
+	dimStyle := lipgloss.NewStyle().Foreground(dimGray)
+
 	var parts []string
 
 	if m.agentBusy {
-		parts = append(parts, lipgloss.NewStyle().Foreground(brightGreen).Render("[agent working... esc:cancel]"))
+		parts = append(parts, lipgloss.NewStyle().Foreground(t.bright).Render("[agent working... esc:cancel]"))
 	}
 
-	keys := "j/k:nav  tab:pane  l:logs  c:chat  h:hide  x:stop  q:quit"
+	keys := fmt.Sprintf("j/k:nav  tab:pane  l:logs  c:chat  h:hide  t:theme(%s)  x:stop  q:quit", t.name)
 	parts = append(parts, dimStyle.Render(keys))
 
 	return strings.Join(parts, "  ")

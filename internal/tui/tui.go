@@ -41,6 +41,7 @@ type Model struct {
 	activePane  pane
 	rightMode   mode
 	leftHidden  bool
+	themeIdx    int
 
 	logViewport  viewport.Model
 	chatViewport viewport.Model
