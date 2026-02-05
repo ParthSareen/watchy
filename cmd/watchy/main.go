@@ -11,6 +11,7 @@ import (
 	"github.com/parth/watchy/internal/config"
 	"github.com/parth/watchy/internal/ollama"
 	"github.com/parth/watchy/internal/task"
+	"github.com/parth/watchy/internal/tick"
 	"github.com/parth/watchy/internal/tui"
 )
 
@@ -86,6 +87,12 @@ func main() {
 		}
 	}
 
+	tickStore, err := tick.NewStore(cfg.TicksPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading ticks: %s\n", err)
+		os.Exit(1)
+	}
+
 	cmd := ""
 	if len(args) >= 1 {
 		cmd = args[0]
@@ -108,12 +115,18 @@ func main() {
 		cmdAsk(mgr, cfg, ollamaHost, subArgs)
 	case "cleanup":
 		cmdCleanup(mgr, cfg)
+	case "tick":
+		cmdTick(tickStore, subArgs)
 	case "":
 		cmdTUI(mgr, cfg, ollamaHost)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-		printUsage()
-		os.Exit(1)
+		if tickStore.Has(cmd) {
+			cmdRunTick(mgr, tickStore, cmd)
+		} else {
+			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
+			printUsage()
+			os.Exit(1)
+		}
 	}
 }
 
@@ -133,7 +146,11 @@ Commands:
   list                              List all tasks
   logs <task-id> [-n <lines>]       View task logs
   ask <task-id> "<question>"        Ask the AI agent about a task
-  cleanup                           Clean up old completed tasks`)
+  cleanup                           Clean up old completed tasks
+  tick save <name> <command>        Save a command as a named tick
+  tick list                         List all saved ticks
+  tick rm <name>                    Remove a saved tick
+  <tick-name>                       Run a saved tick as a task`)
 }
 
 func cmdStart(mgr *task.Manager, args []string) {
@@ -306,6 +323,91 @@ func cmdCleanup(mgr *task.Manager, cfg *config.Config) {
 	}
 
 	fmt.Printf("Cleaned up %d old task(s)\n", count)
+}
+
+func cmdTick(store *tick.Store, args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage:")
+		fmt.Fprintln(os.Stderr, "  watchy tick save <name> <command>")
+		fmt.Fprintln(os.Stderr, "  watchy tick list")
+		fmt.Fprintln(os.Stderr, "  watchy tick rm <name>")
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "save":
+		cmdTickSave(store, args[1:])
+	case "list":
+		cmdTickList(store)
+	case "rm":
+		cmdTickRm(store, args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown tick subcommand: %s\n", args[0])
+		os.Exit(1)
+	}
+}
+
+func cmdTickSave(store *tick.Store, args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: watchy tick save <name> <command>")
+		os.Exit(1)
+	}
+
+	name := args[0]
+	command := strings.Join(args[1:], " ")
+
+	if err := store.Save(name, command, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Saved tick %q: %s\n", name, command)
+}
+
+func cmdTickList(store *tick.Store) {
+	ticks := store.List()
+	if len(ticks) == 0 {
+		fmt.Println("No ticks saved")
+		fmt.Println("Save one with: watchy tick save <name> <command>")
+		return
+	}
+
+	fmt.Printf("%-15s %s\n", "NAME", "COMMAND")
+	fmt.Println(strings.Repeat("-", 60))
+	for _, t := range ticks {
+		fmt.Printf("%-15s %s\n", t.Name, t.Tick.Command)
+	}
+}
+
+func cmdTickRm(store *tick.Store, args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: watchy tick rm <name>")
+		os.Exit(1)
+	}
+
+	if err := store.Remove(args[0]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Removed tick %q\n", args[0])
+}
+
+func cmdRunTick(mgr *task.Manager, store *tick.Store, name string) {
+	t, err := store.Get(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
+	}
+
+	taskID, err := mgr.StartTask(name, t.Command)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Started tick %q as task %d: %s\n", name, taskID, t.Command)
+	fmt.Printf("View logs: watchy logs %d\n", taskID)
 }
 
 func truncate(s string, max int) string {
