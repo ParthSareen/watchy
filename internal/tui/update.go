@@ -207,6 +207,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "t":
 		m.themeIdx = (m.themeIdx + 1) % len(themes)
+		m.cfg.Theme = themes[m.themeIdx].name
+		m.cfg.Save()
 	case "h":
 		m.leftHidden = !m.leftHidden
 		m.recalcLayout()

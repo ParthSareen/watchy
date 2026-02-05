@@ -288,7 +288,7 @@ func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string) {
 		os.Exit(1)
 	}
 
-	model := tui.New(mgr, a)
+	model := tui.New(mgr, a, cfg)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	model.SetProgram(p)
 

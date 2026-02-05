@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/parth/watchy/internal/agent"
+	"github.com/parth/watchy/internal/config"
 	"github.com/parth/watchy/internal/task"
 )
 
@@ -35,6 +36,7 @@ type Model struct {
 	mgr          *task.Manager
 	agent        *agent.Agent
 	conversation *agent.Conversation
+	cfg          *config.Config
 
 	tasks       []*task.Task
 	selectedIdx int
@@ -57,7 +59,7 @@ type Model struct {
 }
 
 // New creates a new TUI model
-func New(mgr *task.Manager, ag *agent.Agent) Model {
+func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config) Model {
 	ti := textarea.New()
 	ti.Placeholder = "Ask the agent..."
 	ti.SetHeight(3)
@@ -65,12 +67,23 @@ func New(mgr *task.Manager, ag *agent.Agent) Model {
 
 	conv := ag.NewConversation()
 
+	// Find theme index from config
+	themeIdx := 0
+	for i, t := range themes {
+		if t.name == cfg.Theme {
+			themeIdx = i
+			break
+		}
+	}
+
 	return Model{
 		mgr:          mgr,
 		agent:        ag,
 		conversation: conv,
+		cfg:          cfg,
 		activePane:   paneLeft,
 		rightMode:    modeLog,
+		themeIdx:     themeIdx,
 		logViewport:  viewport.New(0, 0),
 		chatViewport: viewport.New(0, 0),
 		chatInput:    ti,

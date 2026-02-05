@@ -12,8 +12,10 @@ type Config struct {
 	HomeDir       string
 	LogsDir       string
 	DBPath        string
+	ConfigPath    string
 	RetentionDays int    `yaml:"retention_days"`
 	Model         string `yaml:"model"`
+	Theme         string `yaml:"theme"`
 }
 
 // New creates a new Config and ensures directories exist
@@ -32,16 +34,19 @@ func New() (*Config, error) {
 		return nil, fmt.Errorf("failed to create logs directory: %w", err)
 	}
 
+	configPath := filepath.Join(watchyDir, "config.yaml")
+
 	cfg := &Config{
 		HomeDir:       watchyDir,
 		LogsDir:       logsDir,
 		DBPath:        dbPath,
+		ConfigPath:    configPath,
 		RetentionDays: 1,
 		Model:         "glm-4.7:cloud",
+		Theme:         "green",
 	}
 
 	// Load config file if it exists
-	configPath := filepath.Join(watchyDir, "config.yaml")
 	if err := cfg.loadConfigFile(configPath); err != nil {
 		// Only fail if the file exists but can't be parsed
 		if !os.IsNotExist(err) {
@@ -63,15 +68,22 @@ func (c *Config) loadConfigFile(path string) error {
 }
 
 func (c *Config) writeDefaultConfig(path string) {
+	c.Save()
+}
+
+// Save persists the current config to disk
+func (c *Config) Save() error {
 	data, err := yaml.Marshal(struct {
 		RetentionDays int    `yaml:"retention_days"`
 		Model         string `yaml:"model"`
+		Theme         string `yaml:"theme"`
 	}{
 		RetentionDays: c.RetentionDays,
 		Model:         c.Model,
+		Theme:         c.Theme,
 	})
 	if err != nil {
-		return
+		return err
 	}
-	os.WriteFile(path, data, 0644)
+	return os.WriteFile(c.ConfigPath, data, 0644)
 }

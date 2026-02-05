@@ -21,6 +21,7 @@ var themes = []theme{
 	{"pink", lipgloss.Color("205"), lipgloss.Color("125")},
 	{"cyan", lipgloss.Color("51"), lipgloss.Color("30")},
 	{"red", lipgloss.Color("196"), lipgloss.Color("88")},
+	{"white", lipgloss.Color("255"), lipgloss.Color("245")},
 }
 
 var (
