@@ -230,7 +230,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.activePane = paneRight
 		m.chatInput.Focus()
 	case "enter":
-		if m.activePane == paneRight && m.rightMode == modeChat {
+		if m.activePane == paneLeft && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
+			// Open logs for selected task
+			m.rightMode = modeLog
+			m.activePane = paneRight
+			return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
+		} else if m.activePane == paneRight && m.rightMode == modeChat {
 			m.chatInput.Focus()
 		}
 	case "x":
