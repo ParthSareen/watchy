@@ -3,7 +3,9 @@
 
 Background task manager with a TUI and an LLM agent that can read logs, run diagnostics, and start/stop tasks on your behalf.
 
-Uses Ollama for local inference. The agent sees all your tasks and their log files, and has tools to read files, run shell commands, and manage tasks.
+Uses Ollama for inference. The agent sees all your tasks and their log files, and has tools to read files, run shell commands, and manage tasks.
+
+![TUI](TUI.png)
 
 ## Install
 
