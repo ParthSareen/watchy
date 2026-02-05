@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"time"
@@ -18,11 +20,11 @@ type Agent struct {
 	taskManager *task.Manager
 }
 
-// NewAgent creates a new Ollama agent
-func NewAgent(taskManager *task.Manager) (*Agent, error) {
-	client, err := api.ClientFromEnvironment()
+// NewAgent creates a new Ollama agent with the given Ollama host URL
+func NewAgent(taskManager *task.Manager, ollamaHost string) (*Agent, error) {
+	client, err := createClient(ollamaHost)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Ollama client: %w", err)
+		return nil, err
 	}
 
 	return &Agent{
@@ -32,9 +34,9 @@ func NewAgent(taskManager *task.Manager) (*Agent, error) {
 	}, nil
 }
 
-// NewAgentWithModel creates a new Ollama agent with a specific model
-func NewAgentWithModel(taskManager *task.Manager, model string) (*Agent, error) {
-	agent, err := NewAgent(taskManager)
+// NewAgentWithModel creates a new Ollama agent with a specific model and host
+func NewAgentWithModel(taskManager *task.Manager, model string, ollamaHost string) (*Agent, error) {
+	agent, err := NewAgent(taskManager, ollamaHost)
 	if err != nil {
 		return nil, err
 	}
@@ -42,6 +44,21 @@ func NewAgentWithModel(taskManager *task.Manager, model string) (*Agent, error) 
 		agent.model = model
 	}
 	return agent, nil
+}
+
+// createClient creates an Ollama API client for the given host URL.
+// If ollamaHost is empty, falls back to the environment-based client.
+func createClient(ollamaHost string) (*api.Client, error) {
+	if ollamaHost == "" {
+		return api.ClientFromEnvironment()
+	}
+
+	baseURL, err := url.Parse(ollamaHost)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ollama host URL: %w", err)
+	}
+
+	return api.NewClient(baseURL, http.DefaultClient), nil
 }
 
 // ToolStartEvent is emitted before a tool executes
@@ -109,11 +126,17 @@ Environment:
 
 All tasks:
 %s
-When the user asks questions, use your tools to investigate logs and provide accurate answers.
-You can read log files with read_file, run analysis commands with bash_command, start new background tasks with start_task, and stop running tasks with stop_task.
-When starting tasks, if something fails, read the logs to diagnose and retry with a corrected command.
+You are an operator. When the user asks you to do something, don't just answer -- do it.
 
-Be concise and helpful.`, hostname, runtime.GOOS, runtime.GOARCH, cwd, os.Getenv("SHELL"), tasksContext)
+Approach:
+1. Figure out what's needed: read files, check running processes, inspect logs, look at the environment.
+2. Do the work: start services, run setup scripts, install dependencies, configure things.
+3. Verify it worked: check health endpoints, read logs for errors, confirm processes are running.
+4. If something fails: read the logs, diagnose the issue, fix it, and retry. Keep going until it works or you've exhausted your options.
+
+Don't ask the user what to do -- investigate and act. Use bash_command to explore the system, read_file to check configs and logs, start_task to run things in the background, and stop_task to kill broken processes.
+
+Be concise. Show what you did and what happened, not what you could do.`, hostname, runtime.GOOS, runtime.GOARCH, cwd, os.Getenv("SHELL"), tasksContext)
 
 	if len(c.messages) > 0 {
 		c.messages[0] = api.Message{Role: "system", Content: systemPrompt}

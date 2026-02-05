@@ -9,8 +9,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/config"
+	"github.com/parth/watchy/internal/ollama"
 	"github.com/parth/watchy/internal/task"
 	"github.com/parth/watchy/internal/tui"
+)
+
+const (
+	ollamaPort    = 11439
+	ollamaCloudURL = "https://ollama.com"
 )
 
 func main() {
@@ -32,13 +38,40 @@ func main() {
 	// Sync task statuses on startup
 	mgr.SyncTaskStatus()
 
-	// Parse global --model flag
+	// Parse global flags
 	args := os.Args[1:]
+	onlineMode := false
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--model" && i+1 < len(args) {
+		if args[i] == "--online" {
+			onlineMode = true
+			args = append(args[:i], args[i+1:]...)
+			i--
+		} else if args[i] == "--model" && i+1 < len(args) {
 			cfg.Model = args[i+1]
 			args = append(args[:i], args[i+2:]...)
-			break
+			i--
+		}
+	}
+
+	// Determine Ollama host
+	var srv *ollama.Server
+	ollamaHost := ""
+	if onlineMode {
+		ollamaHost = ollamaCloudURL
+	} else {
+		// Start managed Ollama server
+		srv = ollama.NewServer(ollamaPort)
+		if err := srv.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not start managed Ollama: %s\n", err)
+			// ollamaHost stays empty, agent will fall back to environment
+		} else {
+			defer srv.Stop()
+			if err := srv.WaitReady(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: managed Ollama not ready: %s\n", err)
+				srv.Stop()
+			} else {
+				ollamaHost = srv.Host()
+			}
 		}
 	}
 
@@ -61,11 +94,11 @@ func main() {
 	case "logs":
 		cmdLogs(mgr, subArgs)
 	case "ask":
-		cmdAsk(mgr, cfg, subArgs)
+		cmdAsk(mgr, cfg, ollamaHost, subArgs)
 	case "cleanup":
 		cmdCleanup(mgr, cfg)
 	case "":
-		cmdTUI(mgr, cfg)
+		cmdTUI(mgr, cfg, ollamaHost)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
@@ -74,9 +107,13 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`Usage: watchy [command] [args]
+	fmt.Println(`Usage: watchy [--online] [--model <model>] [command] [args]
 
 Running watchy with no command launches the interactive TUI.
+
+Global flags:
+  --online              Use ollama.com cloud API instead of local server
+  --model <model>       Specify which model to use
 
 Commands:
   start <command> [--name <name>]   Start a background task
@@ -201,7 +238,7 @@ func cmdLogs(mgr *task.Manager, args []string) {
 	}
 }
 
-func cmdAsk(mgr *task.Manager, cfg *config.Config, args []string) {
+func cmdAsk(mgr *task.Manager, cfg *config.Config, ollamaHost string, args []string) {
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "Error: task ID and question are required")
 		fmt.Fprintln(os.Stderr, "Usage: watchy ask <task-id> \"<question>\"")
@@ -216,7 +253,7 @@ func cmdAsk(mgr *task.Manager, cfg *config.Config, args []string) {
 
 	question := strings.Join(args[1:], " ")
 
-	a, err := agent.NewAgentWithModel(mgr, cfg.Model)
+	a, err := agent.NewAgentWithModel(mgr, cfg.Model, ollamaHost)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
@@ -232,8 +269,8 @@ func cmdAsk(mgr *task.Manager, cfg *config.Config, args []string) {
 	fmt.Println(answer)
 }
 
-func cmdTUI(mgr *task.Manager, cfg *config.Config) {
-	a, err := agent.NewAgentWithModel(mgr, cfg.Model)
+func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string) {
+	a, err := agent.NewAgentWithModel(mgr, cfg.Model, ollamaHost)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating agent: %s\n", err)
 		os.Exit(1)
