@@ -10,6 +10,7 @@ import (
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/config"
 	"github.com/parth/watchy/internal/task"
+	"github.com/parth/watchy/internal/tick"
 )
 
 type pane int
@@ -37,6 +38,7 @@ type Model struct {
 	agent        *agent.Agent
 	conversation *agent.Conversation
 	cfg          *config.Config
+	tickStore    *tick.Store
 
 	tasks       []*task.Task
 	selectedIdx int
@@ -59,7 +61,7 @@ type Model struct {
 }
 
 // New creates a new TUI model
-func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config) Model {
+func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick.Store) Model {
 	ti := textarea.New()
 	ti.Placeholder = "Ask the agent..."
 	ti.SetHeight(3)
@@ -81,6 +83,7 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config) Model {
 		agent:        ag,
 		conversation: conv,
 		cfg:          cfg,
+		tickStore:    tickStore,
 		activePane:   paneLeft,
 		rightMode:    modeLog,
 		themeIdx:     themeIdx,

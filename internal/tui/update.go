@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -133,7 +134,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if text != "" {
 				m.chatInput.Reset()
 
-				// Handle /model command
+				// Handle slash commands
 				if strings.HasPrefix(text, "/model") {
 					parts := strings.Fields(text)
 					if len(parts) == 1 {
@@ -147,6 +148,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 							role: "agent", content: "model set to: " + newModel,
 						})
 					}
+					m.updateChatViewport()
+					return m, nil
+				}
+
+				if strings.HasPrefix(text, "/save") {
+					m.handleSaveCommand(text)
 					m.updateChatViewport()
 					return m, nil
 				}
@@ -268,6 +275,76 @@ func (m *Model) recalcLayout() {
 	m.chatViewport.Width = rightWidth
 	m.chatViewport.Height = contentHeight - chatInputHeight - 1
 	m.chatInput.SetWidth(rightWidth)
+}
+
+func (m *Model) handleSaveCommand(text string) {
+	parts := strings.Fields(text)
+
+	if len(parts) < 2 {
+		m.chatHistory = append(m.chatHistory, chatMessage{
+			role: "agent", content: "usage: /save <name> [command]\n  /save <name> <command>  save a specific command\n  /save <name>            save the last command the agent started",
+		})
+		return
+	}
+
+	name := parts[1]
+
+	if len(parts) >= 3 {
+		// /save <name> <command...>
+		command := strings.Join(parts[2:], " ")
+		if err := m.tickStore.Save(name, command, ""); err != nil {
+			m.chatHistory = append(m.chatHistory, chatMessage{
+				role: "agent", content: fmt.Sprintf("error: %s", err),
+			})
+			return
+		}
+		m.chatHistory = append(m.chatHistory, chatMessage{
+			role: "agent", content: fmt.Sprintf("saved tick %q: %s", name, command),
+		})
+		return
+	}
+
+	// /save <name> - find the last start_task from chat history
+	command := m.findLastStartTaskCommand()
+	if command == "" {
+		m.chatHistory = append(m.chatHistory, chatMessage{
+			role: "agent", content: "no start_task found in chat history",
+		})
+		return
+	}
+
+	if err := m.tickStore.Save(name, command, ""); err != nil {
+		m.chatHistory = append(m.chatHistory, chatMessage{
+			role: "agent", content: fmt.Sprintf("error: %s", err),
+		})
+		return
+	}
+	m.chatHistory = append(m.chatHistory, chatMessage{
+		role: "agent", content: fmt.Sprintf("saved tick %q: %s", name, command),
+	})
+}
+
+// findLastStartTaskCommand scans chat history backwards for the last start_task tool call
+// and extracts the command from its JSON args.
+func (m *Model) findLastStartTaskCommand() string {
+	for i := len(m.chatHistory) - 1; i >= 0; i-- {
+		msg := m.chatHistory[i]
+		if msg.role != "tool" {
+			continue
+		}
+		if !strings.HasPrefix(msg.content, "[start_task]") {
+			continue
+		}
+		argsStr := strings.TrimPrefix(msg.content, "[start_task] ")
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+			continue
+		}
+		if cmd, ok := args["command"].(string); ok {
+			return cmd
+		}
+	}
+	return ""
 }
 
 func (m *Model) updateChatViewport() {

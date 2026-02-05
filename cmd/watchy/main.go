@@ -118,7 +118,7 @@ func main() {
 	case "tick":
 		cmdTick(tickStore, subArgs)
 	case "":
-		cmdTUI(mgr, cfg, ollamaHost)
+		cmdTUI(mgr, cfg, ollamaHost, tickStore)
 	default:
 		if tickStore.Has(cmd) {
 			cmdRunTick(mgr, tickStore, cmd)
@@ -298,14 +298,14 @@ func cmdAsk(mgr *task.Manager, cfg *config.Config, ollamaHost string, args []str
 	fmt.Println(answer)
 }
 
-func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string) {
+func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string, tickStore *tick.Store) {
 	a, err := agent.NewAgentWithModel(mgr, cfg.Model, ollamaHost)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating agent: %s\n", err)
 		os.Exit(1)
 	}
 
-	model := tui.New(mgr, a, cfg)
+	model := tui.New(mgr, a, cfg, tickStore)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	model.SetProgram(p)
 
