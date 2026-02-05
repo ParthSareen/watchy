@@ -14,12 +14,23 @@ import (
 	"github.com/parth/watchy/internal/tui"
 )
 
+// version is set via ldflags at build time: -ldflags "-X main.version=v0.2.0"
+var version = "dev"
+
 const (
-	ollamaPort    = 11439
+	ollamaPort     = 11439
 	ollamaCloudURL = "https://ollama.com"
 )
 
 func main() {
+	// Check --version early before any setup
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" {
+			fmt.Println(version)
+			return
+		}
+	}
+
 	cfg, err := config.New()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
@@ -114,6 +125,7 @@ Running watchy with no command launches the interactive TUI.
 Global flags:
   --online              Use ollama.com cloud API instead of local server
   --model <model>       Specify which model to use
+  --version, -v         Print version and exit
 
 Commands:
   start <command> [--name <name>]   Start a background task
