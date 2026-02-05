@@ -32,18 +32,29 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
-	leftWidth := m.width * 30 / 100
-	rightWidth := m.width - leftWidth - 3
 	contentHeight := m.height - 4
 
-	// Left pane: task list
-	leftContent := m.renderTaskList(leftWidth-2, contentHeight)
-	leftPane := m.applyBorder(paneLeft, leftWidth, contentHeight, "Tasks", leftContent)
+	var rightWidth int
+	var leftPane string
+
+	if m.leftHidden {
+		rightWidth = m.width - 2
+	} else {
+		leftWidth := m.width * 30 / 100
+		rightWidth = m.width - leftWidth - 3
+
+		// Left pane: task list
+		leftContent := m.renderTaskList(leftWidth-2, contentHeight)
+		leftPane = m.applyBorder(paneLeft, leftWidth, contentHeight, "Tasks", leftContent)
+	}
 
 	// Right pane: logs or chat
 	var rightContent, rightTitle string
 	if m.rightMode == modeLog {
 		rightTitle = "Logs"
+		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
+			rightTitle = fmt.Sprintf("Logs [%d: %s]", m.tasks[m.selectedIdx].ID, m.tasks[m.selectedIdx].Name)
+		}
 		rightContent = m.logViewport.View()
 	} else {
 		rightTitle = "Chat"
@@ -51,7 +62,12 @@ func (m Model) View() string {
 	}
 	rightPane := m.applyBorder(paneRight, rightWidth, contentHeight, rightTitle, rightContent)
 
-	main := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	var main string
+	if m.leftHidden {
+		main = rightPane
+	} else {
+		main = lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
+	}
 
 	// Status bar
 	statusBar := m.renderStatusBar()
@@ -115,7 +131,7 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, lipgloss.NewStyle().Foreground(brightGreen).Render("[agent working... esc:cancel]"))
 	}
 
-	keys := "j/k:navigate  tab:switch pane  l:logs  c:chat  x:stop  q:quit"
+	keys := "j/k:nav  tab:pane  l:logs  c:chat  h:hide  x:stop  q:quit"
 	parts = append(parts, dimStyle.Render(keys))
 
 	return strings.Join(parts, "  ")

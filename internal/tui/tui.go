@@ -40,6 +40,7 @@ type Model struct {
 	selectedIdx int
 	activePane  pane
 	rightMode   mode
+	leftHidden  bool
 
 	logViewport  viewport.Model
 	chatViewport viewport.Model

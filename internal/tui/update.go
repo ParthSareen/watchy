@@ -205,9 +205,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePane = paneLeft
 			m.chatInput.Blur()
 		}
+	case "h":
+		m.leftHidden = !m.leftHidden
+		m.recalcLayout()
 	case "l":
 		m.rightMode = modeLog
 		m.chatInput.Blur()
+		// Find latest running task
+		for i := len(m.tasks) - 1; i >= 0; i-- {
+			if m.tasks[i].Status == "running" {
+				m.selectedIdx = i
+				break
+			}
+		}
 		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
 		}
@@ -232,11 +242,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) recalcLayout() {
-	leftWidth := m.width * 30 / 100
-	rightWidth := m.width - leftWidth - 3 // borders
-	contentHeight := m.height - 4         // status bar + borders
+	var rightWidth int
+	contentHeight := m.height - 4 // status bar + borders
 
-	_ = leftWidth
+	if m.leftHidden {
+		rightWidth = m.width - 2 // just borders
+	} else {
+		leftWidth := m.width * 30 / 100
+		rightWidth = m.width - leftWidth - 3 // borders
+	}
+
 	m.logViewport.Width = rightWidth
 	m.logViewport.Height = contentHeight
 
