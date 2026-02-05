@@ -73,7 +73,7 @@ Ask it things like "start a web server on port 8080", "are there any errors in t
 Optional config at `~/.watchy/config.yaml`:
 
 ```yaml
-retention_days: 7
+retention_days: 1
 model: "glm-4.7:cloud"
 ```
 

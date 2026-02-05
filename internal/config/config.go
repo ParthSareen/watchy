@@ -36,7 +36,7 @@ func New() (*Config, error) {
 		HomeDir:       watchyDir,
 		LogsDir:       logsDir,
 		DBPath:        dbPath,
-		RetentionDays: 7,
+		RetentionDays: 1,
 		Model:         "glm-4.7:cloud",
 	}
 
