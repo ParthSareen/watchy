@@ -129,6 +129,34 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chatInput.Blur()
 			return m, nil
 		}
+
+		// Slash picker navigation
+		if m.showSlashPicker() {
+			filtered := m.filteredSlashCommands()
+			if len(filtered) > 0 {
+				switch key {
+				case "up":
+					m.slashPickerIdx--
+					if m.slashPickerIdx < 0 {
+						m.slashPickerIdx = len(filtered) - 1
+					}
+					return m, nil
+				case "down":
+					m.slashPickerIdx++
+					if m.slashPickerIdx >= len(filtered) {
+						m.slashPickerIdx = 0
+					}
+					return m, nil
+				case "tab":
+					// Complete the selected command
+					m.chatInput.Reset()
+					m.chatInput.SetValue(filtered[m.slashPickerIdx].name + " ")
+					m.slashPickerIdx = 0
+					return m, nil
+				}
+			}
+		}
+
 		if key == "enter" && !m.agentBusy {
 			text := m.chatInput.Value()
 			if text != "" {
@@ -158,6 +186,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
+				if text == "/new" {
+					m.chatHistory = nil
+					m.conversation = m.agent.NewConversation()
+					m.updateChatViewport()
+					return m, nil
+				}
+
 				m.chatHistory = append(m.chatHistory, chatMessage{role: "user", content: text})
 				m.updateChatViewport()
 				m.agentBusy = true
@@ -169,6 +204,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.chatInput, cmd = m.chatInput.Update(msg)
+		m.slashPickerIdx = 0
 		return m, cmd
 	}
 
@@ -255,6 +291,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// showSlashPicker returns true when the input starts with "/" and hasn't been completed yet
+func (m Model) showSlashPicker() bool {
+	val := m.chatInput.Value()
+	return strings.HasPrefix(val, "/") && !strings.Contains(val, " ")
+}
+
+// filteredSlashCommands returns commands matching the current input prefix
+func (m Model) filteredSlashCommands() []slashCommand {
+	val := m.chatInput.Value()
+	var result []slashCommand
+	for _, cmd := range slashCommands {
+		if strings.HasPrefix(cmd.name, val) {
+			result = append(result, cmd)
+		}
+	}
+	return result
 }
 
 func (m *Model) recalcLayout() {

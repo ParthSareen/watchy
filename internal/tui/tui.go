@@ -32,6 +32,17 @@ type chatMessage struct {
 	content string
 }
 
+type slashCommand struct {
+	name string
+	desc string
+}
+
+var slashCommands = []slashCommand{
+	{"/model", "Show or change the model"},
+	{"/save", "Save a command as a tick"},
+	{"/new", "Clear chat and start fresh"},
+}
+
 // Model is the root bubbletea model
 type Model struct {
 	mgr          *task.Manager
@@ -51,12 +62,13 @@ type Model struct {
 	chatViewport viewport.Model
 	chatInput    textarea.Model
 
-	chatHistory  []chatMessage
-	agentBusy    bool
-	agentCancel  context.CancelFunc
-	programRef   *programRef
-	width        int
-	height       int
+	chatHistory    []chatMessage
+	agentBusy      bool
+	agentCancel    context.CancelFunc
+	programRef     *programRef
+	slashPickerIdx int
+	width          int
+	height         int
 
 }
 

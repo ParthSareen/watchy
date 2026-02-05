@@ -64,7 +64,8 @@ func (m Model) View() string {
 		rightContent = m.logViewport.View()
 	} else {
 		rightTitle = "Chat"
-		rightContent = m.chatViewport.View() + "\n" + m.chatInput.View()
+		picker := m.renderSlashPicker()
+		rightContent = m.chatViewport.View() + "\n" + picker + m.chatInput.View()
 	}
 	rightPane := m.applyBorder(paneRight, rightWidth, contentHeight, rightTitle, rightContent)
 
@@ -137,6 +138,40 @@ func (m Model) renderTaskList(width, height int) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderSlashPicker() string {
+	if !m.showSlashPicker() {
+		return ""
+	}
+
+	filtered := m.filteredSlashCommands()
+	if len(filtered) == 0 {
+		return ""
+	}
+
+	t := m.theme()
+	dimStyle := lipgloss.NewStyle().Foreground(dimGray)
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(t.bright)
+
+	var lines []string
+	idx := m.slashPickerIdx % len(filtered)
+	for i, cmd := range filtered {
+		line := fmt.Sprintf("  %-10s %s", cmd.name, cmd.desc)
+		if i == idx {
+			line = selectedStyle.Render(line)
+		} else {
+			line = dimStyle.Render(line)
+		}
+		lines = append(lines, line)
+	}
+
+	border := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.dim).
+		Padding(0, 1)
+
+	return border.Render(strings.Join(lines, "\n")) + "\n"
 }
 
 func (m Model) renderStatusBar() string {
