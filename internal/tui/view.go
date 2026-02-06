@@ -61,7 +61,13 @@ func (m Model) View() string {
 		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			rightTitle = fmt.Sprintf("Logs [%d: %s]", m.tasks[m.selectedIdx].ID, m.tasks[m.selectedIdx].Name)
 		}
+		if m.searchTerm != "" && !m.searchMode {
+			rightTitle += fmt.Sprintf(" [%q %d/%d]", m.searchTerm, m.matchIndex+1, len(m.searchMatches))
+		}
 		rightContent = m.logViewport.View()
+		if m.searchMode {
+			rightContent += "\n" + m.searchInput.View()
+		}
 	} else {
 		rightTitle = "Chat"
 		picker := m.renderSlashPicker()
@@ -184,7 +190,7 @@ func (m Model) renderStatusBar() string {
 		parts = append(parts, lipgloss.NewStyle().Foreground(t.bright).Render("[agent working... esc:cancel]"))
 	}
 
-	keys := fmt.Sprintf("j/k:nav  tab:pane  l:logs  c:chat  h:hide  t:theme(%s)  x:stop  q:quit", t.name)
+	keys := fmt.Sprintf("j/k:nav  g/G:top/bottom  /:search  n/N:match  tab:pane  l:logs  c:chat  h:hide  t:theme(%s)  x:stop  r:restart  q:quit", t.name)
 	parts = append(parts, dimStyle.Render(keys))
 
 	return strings.Join(parts, "  ")

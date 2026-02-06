@@ -39,8 +39,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case logContentMsg:
-		m.logViewport.SetContent(string(msg))
-		m.logViewport.GotoBottom()
+		m.originalLogContent = string(msg)
+		atBottom := m.logViewport.AtBottom()
+		offset := m.logViewport.YOffset
+		if m.searchTerm != "" {
+			m.applySearchFilter()
+		} else {
+			m.logViewport.SetContent(string(msg))
+		}
+		if atBottom {
+			m.logViewport.GotoBottom()
+		} else {
+			m.logViewport.SetYOffset(offset)
+		}
 		return m, nil
 
 	case agentToolStartMsg:
@@ -80,12 +91,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskStoppedMsg:
 		return m, fetchTasks(m.mgr)
 
+	case taskRestartedMsg:
+		newID := int64(msg)
+		cmds = append(cmds, fetchTasks(m.mgr))
+		if newID > 0 {
+			// After tasks refresh, select the new task
+			cmds = append(cmds, func() tea.Msg {
+				// Small delay to let task list update
+				time.Sleep(100 * time.Millisecond)
+				tasks, _ := m.mgr.ListTasks()
+				for i, t := range tasks {
+					if int64(t.ID) == newID {
+						return selectTaskMsg(i)
+					}
+				}
+				return nil
+			})
+		}
+		return m, tea.Batch(cmds...)
+
+	case selectTaskMsg:
+		m.selectedIdx = int(msg)
+		if m.rightMode == modeLog && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
+			return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 
 	// Pass to active components
-	if m.activePane == paneRight && m.rightMode == modeChat {
+	if m.searchMode {
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	} else if m.activePane == paneRight && m.rightMode == modeChat {
 		var cmd tea.Cmd
 		m.chatInput, cmd = m.chatInput.Update(msg)
 		if cmd != nil {
@@ -107,6 +150,31 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.chatHistory = append(m.chatHistory, chatMessage{role: "agent", content: "[cancelled]"})
 		m.updateChatViewport()
 		return m, nil
+	}
+
+	// Search mode input handling
+	if m.searchMode {
+		switch key {
+		case "enter":
+			term := m.searchInput.Value()
+			m.searchMode = false
+			m.searchInput.Blur()
+			if term != "" {
+				m.searchTerm = term
+				m.matchIndex = 0
+				m.applySearchFilter()
+			}
+			return m, nil
+		case "esc":
+			m.searchMode = false
+			m.searchInput.Blur()
+			m.searchInput.SetValue("")
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			return m, cmd
+		}
 	}
 
 	// Global quit
@@ -241,6 +309,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.chatViewport.LineUp(1)
 			}
 		}
+	case "g":
+		if m.activePane == paneRight && m.rightMode == modeLog {
+			m.logViewport.GotoTop()
+		}
+	case "G":
+		if m.activePane == paneRight && m.rightMode == modeLog {
+			m.logViewport.GotoBottom()
+		}
 	case "tab":
 		if m.activePane == paneLeft {
 			m.activePane = paneRight
@@ -287,6 +363,41 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if t.Status == "running" {
 				return m, stopTask(m.mgr, t.ID)
 			}
+		}
+	case "r":
+		if m.activePane == paneLeft && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
+			t := m.tasks[m.selectedIdx]
+			if t.Status == "stopped" || t.Status == "crashed" {
+				return m, restartTaskCmd(m.mgr, t.ID)
+			}
+		}
+	case "/":
+		if m.activePane == paneRight && m.rightMode == modeLog {
+			m.searchMode = true
+			m.searchInput.SetValue("")
+			cmd := m.searchInput.Focus()
+			return m, cmd
+		}
+	case "n":
+		if m.activePane == paneRight && m.rightMode == modeLog && m.searchTerm != "" && len(m.searchMatches) > 0 {
+			m.matchIndex = (m.matchIndex + 1) % len(m.searchMatches)
+			m.scrollToMatch()
+		}
+	case "N":
+		if m.activePane == paneRight && m.rightMode == modeLog && m.searchTerm != "" && len(m.searchMatches) > 0 {
+			m.matchIndex--
+			if m.matchIndex < 0 {
+				m.matchIndex = len(m.searchMatches) - 1
+			}
+			m.scrollToMatch()
+		}
+	case "esc":
+		if m.searchTerm != "" {
+			m.searchTerm = ""
+			m.searchMatches = nil
+			m.matchIndex = 0
+			m.logViewport.SetContent(m.originalLogContent)
+			return m, nil
 		}
 	}
 
@@ -399,6 +510,35 @@ func (m *Model) findLastStartTaskCommand() string {
 		}
 	}
 	return ""
+}
+
+func (m *Model) applySearchFilter() {
+	lines := strings.Split(m.originalLogContent, "\n")
+	termLower := strings.ToLower(m.searchTerm)
+	m.searchMatches = nil
+	var filtered []string
+	for _, line := range lines {
+		if strings.Contains(strings.ToLower(line), termLower) {
+			m.searchMatches = append(m.searchMatches, len(filtered))
+			filtered = append(filtered, line)
+		}
+	}
+	if len(filtered) == 0 {
+		m.logViewport.SetContent(fmt.Sprintf("no matches for %q", m.searchTerm))
+	} else {
+		m.logViewport.SetContent(strings.Join(filtered, "\n"))
+	}
+	if m.matchIndex >= len(m.searchMatches) {
+		m.matchIndex = 0
+	}
+}
+
+func (m *Model) scrollToMatch() {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	line := m.searchMatches[m.matchIndex]
+	m.logViewport.SetYOffset(line)
 }
 
 func (m *Model) updateChatViewport() {

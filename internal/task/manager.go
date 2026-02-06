@@ -201,3 +201,21 @@ func (m *Manager) SyncTaskStatus() error {
 
 	return nil
 }
+
+// RestartTask restarts a stopped or crashed task with the same command
+func (m *Manager) RestartTask(id int) (int64, error) {
+	task, err := m.GetTask(id)
+	if err != nil {
+		return 0, err
+	}
+
+	// If task is running, stop it first
+	if task.Status == "running" {
+		if err := m.StopTask(id); err != nil {
+			return 0, fmt.Errorf("failed to stop running task: %w", err)
+		}
+	}
+
+	// Start a new task with the same name and command
+	return m.StartTask(task.Name, task.Command)
+}

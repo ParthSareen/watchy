@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/parth/watchy/internal/agent"
+	"github.com/parth/watchy/internal/logcolor"
 	"github.com/parth/watchy/internal/task"
 )
 
@@ -31,7 +32,7 @@ func fetchLogs(mgr *task.Manager, taskID int) tea.Cmd {
 			if i > 0 {
 				content += "\n"
 			}
-			content += line
+			content += logcolor.Colorize(line)
 		}
 		return logContentMsg(content)
 	}
@@ -63,6 +64,16 @@ func stopTask(mgr *task.Manager, id int) tea.Cmd {
 	return func() tea.Msg {
 		mgr.StopTask(id)
 		return taskStoppedMsg(id)
+	}
+}
+
+func restartTaskCmd(mgr *task.Manager, id int) tea.Cmd {
+	return func() tea.Msg {
+		newTaskID, err := mgr.RestartTask(id)
+		if err != nil {
+			return taskRestartedMsg(0)
+		}
+		return taskRestartedMsg(newTaskID)
 	}
 }
 

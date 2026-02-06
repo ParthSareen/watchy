@@ -299,6 +299,14 @@ func cmdAsk(mgr *task.Manager, cfg *config.Config, ollamaHost string, args []str
 }
 
 func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string, tickStore *tick.Store) {
+	// Run auto-cleanup before starting TUI
+	cleaned, err := mgr.Cleanup(cfg.RetentionDays)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Auto-cleanup error: %v\n", err)
+	} else if cleaned > 0 {
+		fmt.Printf("Cleaned up %d old task(s)\n", cleaned)
+	}
+
 	a, err := agent.NewAgentWithModel(mgr, cfg.Model, ollamaHost)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating agent: %s\n", err)

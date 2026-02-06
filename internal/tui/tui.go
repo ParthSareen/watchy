@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -70,6 +71,13 @@ type Model struct {
 	width          int
 	height         int
 
+	// Log search state
+	searchMode         bool
+	searchInput        textinput.Model
+	searchTerm         string
+	searchMatches      []int
+	matchIndex         int
+	originalLogContent string
 }
 
 // New creates a new TUI model
@@ -78,6 +86,11 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick
 	ti.Placeholder = "Ask the agent..."
 	ti.SetHeight(3)
 	ti.ShowLineNumbers = false
+
+	si := textinput.New()
+	si.Placeholder = "Search..."
+	si.Prompt = "/"
+	si.Width = 30
 
 	conv := ag.NewConversation()
 
@@ -102,6 +115,7 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick
 		logViewport:  viewport.New(0, 0),
 		chatViewport: viewport.New(0, 0),
 		chatInput:    ti,
+		searchInput:  si,
 		programRef:   &programRef{},
 	}
 }
