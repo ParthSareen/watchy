@@ -42,7 +42,7 @@ func GetTools() []api.Tool {
 			Type: "function",
 			Function: api.ToolFunction{
 				Name:        "bash_command",
-				Description: "Execute a read-only bash command. Allowed: grep, tail, head, awk, sed, wc, cat, sort, uniq, cut, ls, find, ps, lsof, netstat, ss, df, du, free, uptime, whoami, hostname, uname, env, printenv, which, file, stat, id, curl, dig, ping. Pipes are supported.",
+				Description: "Execute a read-only bash command. Allowed: grep, tail, head, awk, sed, wc, cat, sort, uniq, cut, ls, find, ps, lsof, netstat, ss, df, du, free, uptime, whoami, hostname, uname, env, printenv, which, file, stat, id, curl, dig, ping, psql, cd, pkill. Pipes are supported.",
 				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"command"},
@@ -185,6 +185,7 @@ func (a *Agent) bashCommand(command string) (string, error) {
 		"env": true, "printenv": true, "which": true,
 		"file": true, "stat": true, "id": true,
 		"curl": true, "dig": true, "ping": true,
+		"psql": true, "cd": true, "pkill": true,
 	}
 
 	if !safeCommands[parts[0]] {
