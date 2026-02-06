@@ -162,9 +162,8 @@ func (c *Conversation) SendWithEvents(ctx context.Context, message string, onToo
 	c.trimContext()
 
 	tools := GetTools()
-	maxIterations := 10
 
-	for i := 0; i < maxIterations; i++ {
+	for {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
@@ -225,8 +224,6 @@ func (c *Conversation) SendWithEvents(ctx context.Context, message string, onToo
 			})
 		}
 	}
-
-	return "", fmt.Errorf("agent exceeded maximum iterations")
 }
 
 // Send is a simple wrapper without events (used by CLI ask)
@@ -305,9 +302,8 @@ Be concise and helpful in your responses.`,
 	}
 
 	tools := GetTools()
-	maxIterations := 10
 
-	for i := 0; i < maxIterations; i++ {
+	for {
 		stream := false
 		req := &api.ChatRequest{
 			Model:    a.model,
@@ -342,6 +338,4 @@ Be concise and helpful in your responses.`,
 			})
 		}
 	}
-
-	return "", fmt.Errorf("agent exceeded maximum iterations")
 }

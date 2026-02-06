@@ -198,6 +198,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Allow switching to logs without unfocusing first
+		if key == "l" {
+			m.rightMode = modeLog
+			m.chatInput.Blur()
+			// Find latest running task
+			for i := len(m.tasks) - 1; i >= 0; i-- {
+				if m.tasks[i].Status == "running" {
+					m.selectedIdx = i
+					break
+				}
+			}
+			if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
+				return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
+			}
+			return m, nil
+		}
+
 		// Slash picker navigation
 		if m.showSlashPicker() {
 			filtered := m.filteredSlashCommands()
