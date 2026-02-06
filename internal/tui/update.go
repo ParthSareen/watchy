@@ -45,7 +45,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.searchTerm != "" {
 			m.applySearchFilter()
 		} else {
-			m.logViewport.SetContent(string(msg))
+			m.logViewport.SetContent(m.wrapLogContent(string(msg)))
 		}
 		if atBottom {
 			m.logViewport.GotoBottom()
@@ -420,7 +420,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.searchTerm = ""
 			m.searchMatches = nil
 			m.matchIndex = 0
-			m.logViewport.SetContent(m.originalLogContent)
+			m.logViewport.SetContent(m.wrapLogContent(m.originalLogContent))
 			return m, nil
 		}
 	}
@@ -550,7 +550,7 @@ func (m *Model) applySearchFilter() {
 	if len(filtered) == 0 {
 		m.logViewport.SetContent(fmt.Sprintf("no matches for %q", m.searchTerm))
 	} else {
-		m.logViewport.SetContent(strings.Join(filtered, "\n"))
+		m.logViewport.SetContent(m.wrapLogContent(strings.Join(filtered, "\n")))
 	}
 	if m.matchIndex >= len(m.searchMatches) {
 		m.matchIndex = 0

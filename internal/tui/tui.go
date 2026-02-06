@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/config"
 	"github.com/parth/watchy/internal/task"
@@ -127,6 +128,14 @@ type programRef struct {
 // SetProgram sets the tea.Program reference needed for streaming tool call events.
 func (m Model) SetProgram(p *tea.Program) {
 	m.programRef.p = p
+}
+
+// wrapLogContent wraps text to fit the viewport width for line wrapping.
+func (m Model) wrapLogContent(content string) string {
+	if m.logViewport.Width <= 0 {
+		return content
+	}
+	return lipgloss.NewStyle().Width(m.logViewport.Width).Render(content)
 }
 
 func (m Model) Init() tea.Cmd {
