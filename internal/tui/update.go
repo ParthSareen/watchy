@@ -198,8 +198,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Allow switching to logs without unfocusing first
-		if key == "l" {
+		// Allow switching to logs without unfocusing first (ctrl+left arrow)
+		if key == "ctrl+left" {
 			m.rightMode = modeLog
 			m.chatInput.Blur()
 			// Find latest running task
