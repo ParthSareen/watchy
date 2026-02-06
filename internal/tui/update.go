@@ -215,7 +215,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Slash picker navigation
+		// Slash picker navigation (check first so tab completion works)
 		if m.showSlashPicker() {
 			filtered := m.filteredSlashCommands()
 			if len(filtered) > 0 {
@@ -240,6 +240,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
+		}
+
+		// Tab to switch panes from chat input (only if slash picker not showing)
+		if key == "tab" {
+			m.activePane = paneLeft
+			m.chatInput.Blur()
+			return m, nil
 		}
 
 		if key == "enter" && !m.agentBusy {
