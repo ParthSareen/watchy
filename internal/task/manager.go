@@ -122,7 +122,8 @@ func (m *Manager) GetTask(id int) (*Task, error) {
 	return m.storage.GetTask(id)
 }
 
-// TailLogs reads the last N lines from a task's log file
+// TailLogs reads the last N lines from a task's log file.
+// If lines is 0, all lines are returned.
 func (m *Manager) TailLogs(id int, lines int) ([]string, error) {
 	task, err := m.storage.GetTask(id)
 	if err != nil {
@@ -135,7 +136,6 @@ func (m *Manager) TailLogs(id int, lines int) ([]string, error) {
 	}
 	defer file.Close()
 
-	// Read all lines
 	var allLines []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -146,8 +146,7 @@ func (m *Manager) TailLogs(id int, lines int) ([]string, error) {
 		return nil, fmt.Errorf("failed to read log file: %w", err)
 	}
 
-	// Return last N lines
-	if len(allLines) <= lines {
+	if lines <= 0 || len(allLines) <= lines {
 		return allLines, nil
 	}
 	return allLines[len(allLines)-lines:], nil

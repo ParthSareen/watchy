@@ -10,6 +10,7 @@ import (
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/config"
 	"github.com/parth/watchy/internal/ollama"
+	"github.com/parth/watchy/internal/store"
 	"github.com/parth/watchy/internal/task"
 	"github.com/parth/watchy/internal/tick"
 	"github.com/parth/watchy/internal/tui"
@@ -93,6 +94,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	historyStore, err := store.NewHistoryStore(cfg.HistoryPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading history: %s\n", err)
+		os.Exit(1)
+	}
+
 	cmd := ""
 	if len(args) >= 1 {
 		cmd = args[0]
@@ -118,7 +125,7 @@ func main() {
 	case "tick":
 		cmdTick(tickStore, subArgs)
 	case "":
-		cmdTUI(mgr, cfg, ollamaHost, tickStore)
+		cmdTUI(mgr, cfg, ollamaHost, tickStore, historyStore)
 	default:
 		if tickStore.Has(cmd) {
 			cmdRunTick(mgr, tickStore, cmd)
@@ -298,7 +305,7 @@ func cmdAsk(mgr *task.Manager, cfg *config.Config, ollamaHost string, args []str
 	fmt.Println(answer)
 }
 
-func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string, tickStore *tick.Store) {
+func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string, tickStore *tick.Store, historyStore *store.HistoryStore) {
 	// Run auto-cleanup before starting TUI
 	cleaned, err := mgr.Cleanup(cfg.RetentionDays)
 	if err != nil {
@@ -313,7 +320,7 @@ func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string, tickStore 
 		os.Exit(1)
 	}
 
-	model := tui.New(mgr, a, cfg, tickStore)
+	model := tui.New(mgr, a, cfg, tickStore, historyStore)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	model.SetProgram(p)
 

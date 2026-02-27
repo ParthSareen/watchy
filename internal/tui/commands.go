@@ -3,9 +3,11 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/atotto/clipboard"
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/logcolor"
 	"github.com/parth/watchy/internal/task"
@@ -23,18 +25,20 @@ func fetchTasks(mgr *task.Manager) tea.Cmd {
 
 func fetchLogs(mgr *task.Manager, taskID int) tea.Cmd {
 	return func() tea.Msg {
-		lines, err := mgr.TailLogs(taskID, 200)
+		lines, err := mgr.TailLogs(taskID, 0)
 		if err != nil {
-			return logContentMsg("")
+			return logContentMsg{}
 		}
-		content := ""
+		var raw, colored strings.Builder
 		for i, line := range lines {
 			if i > 0 {
-				content += "\n"
+				raw.WriteString("\n")
+				colored.WriteString("\n")
 			}
-			content += logcolor.Colorize(line)
+			raw.WriteString(line)
+			colored.WriteString(logcolor.Colorize(line))
 		}
-		return logContentMsg(content)
+		return logContentMsg{raw: raw.String(), colored: colored.String()}
 	}
 }
 
@@ -81,4 +85,11 @@ func tickEvery(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+func copyToClipboard(text string) tea.Cmd {
+	return func() tea.Msg {
+		clipboard.WriteAll(text)
+		return clipboardCopiedMsg{}
+	}
 }

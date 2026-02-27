@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/parth/watchy/internal/logcolor"
 	"github.com/parth/watchy/internal/task"
 )
 
@@ -25,7 +28,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		cmds = append(cmds, tickEvery(2*time.Second))
 		cmds = append(cmds, fetchTasks(m.mgr))
-		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) && m.rightMode == modeLog {
+		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) && (m.rightMode == modeLog || m.rightMode == modeSplit) {
 			cmds = append(cmds, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID))
 		}
 		return m, tea.Batch(cmds...)
@@ -39,18 +42,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case logContentMsg:
-		m.originalLogContent = string(msg)
+		m.rawLogContent = msg.raw
+		m.originalLogContent = msg.colored
 		atBottom := m.logViewport.AtBottom()
 		offset := m.logViewport.YOffset
+		cursor := m.logCursor // Preserve cursor position
+
 		if m.searchTerm != "" {
 			m.applySearchFilter()
 		} else {
-			m.logViewport.SetContent(m.wrapLogContent(string(msg)))
+			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(msg.colored)))
 		}
+
+		// Update cursor position only if following at bottom
 		if atBottom {
 			m.logViewport.GotoBottom()
+			// Set cursor to last line
+			lines := strings.Count(m.rawLogContent, "\n")
+			if !strings.HasSuffix(m.rawLogContent, "\n") && m.rawLogContent != "" {
+				lines++
+			}
+			if lines > 0 {
+				m.logCursor = lines - 1
+			}
 		} else {
 			m.logViewport.SetYOffset(offset)
+			m.logCursor = cursor // Restore cursor position
 		}
 		return m, nil
 
@@ -112,9 +129,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case selectTaskMsg:
 		m.selectedIdx = int(msg)
-		if m.rightMode == modeLog && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
+		if (m.rightMode == modeLog || m.rightMode == modeSplit) && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
 		}
+		return m, nil
+
+	case clipboardCopiedMsg:
+		m.copied = true
+		// Reset copied flag after a short delay
+		return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+			return clearCopiedMsg{}
+		})
+
+	case clearCopiedMsg:
+		m.copied = false
 		return m, nil
 
 	case tea.KeyMsg:
@@ -311,8 +339,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
 			}
 		} else if m.activePane == paneRight {
-			if m.rightMode == modeLog {
-				m.logViewport.LineDown(1)
+			if m.rightMode == modeLog || m.rightMode == modeSplit {
+				m.logCursorDown()
 			} else {
 				m.chatViewport.LineDown(1)
 			}
@@ -327,36 +355,75 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
 			}
 		} else if m.activePane == paneRight {
-			if m.rightMode == modeLog {
-				m.logViewport.LineUp(1)
+			if m.rightMode == modeLog || m.rightMode == modeSplit {
+				m.logCursorUp()
 			} else {
 				m.chatViewport.LineUp(1)
 			}
 		}
 	case "g":
-		if m.activePane == paneRight && m.rightMode == modeLog {
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) {
+			m.logCursor = 0
+			m.refreshLogContent()
 			m.logViewport.GotoTop()
 		}
 	case "G":
-		if m.activePane == paneRight && m.rightMode == modeLog {
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) {
+			// Set cursor to last line
+			lines := strings.Count(m.rawLogContent, "\n")
+			if !strings.HasSuffix(m.rawLogContent, "\n") && m.rawLogContent != "" {
+				lines++
+			}
+			if lines > 0 {
+				m.logCursor = lines - 1
+			}
+			m.refreshLogContent()
 			m.logViewport.GotoBottom()
 		}
 	case "tab":
-		if m.activePane == paneLeft {
-			m.activePane = paneRight
+		// Cycle: sidebar → logs → chat → sidebar
+		// When sidebar hidden: logs → chat → logs
+		if m.leftHidden {
+			// Sidebar hidden: toggle between logs and chat
+			if m.rightMode == modeLog {
+				m.rightMode = modeChat
+				m.chatInput.Focus()
+			} else {
+				m.rightMode = modeLog
+				m.chatInput.Blur()
+			}
 		} else {
-			m.activePane = paneLeft
-			m.chatInput.Blur()
+			// Sidebar visible: cycle through all three
+			if m.activePane == paneLeft {
+				m.activePane = paneRight
+				m.rightMode = modeLog
+				m.chatInput.Blur()
+			} else if m.rightMode == modeLog {
+				m.rightMode = modeChat
+				m.chatInput.Focus()
+			} else {
+				// In chat, go back to sidebar
+				m.activePane = paneLeft
+				m.chatInput.Blur()
+			}
 		}
 	case "t":
 		m.themeIdx = (m.themeIdx + 1) % len(themes)
 		m.cfg.Theme = themes[m.themeIdx].name
 		m.cfg.Save()
+	case "m":
+		// Toggle light/dark mode
+		m.lightMode = !m.lightMode
+		logcolor.SetLightMode(m.lightMode)
 	case "h":
 		m.leftHidden = !m.leftHidden
 		m.recalcLayout()
 	case "l":
-		m.rightMode = modeLog
+		if m.rightMode == modeSplit {
+			m.rightMode = modeLog
+		} else {
+			m.rightMode = modeLog
+		}
 		m.chatInput.Blur()
 		// Find latest running task
 		for i := len(m.tasks) - 1; i >= 0; i-- {
@@ -368,17 +435,36 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
 		}
+		m.recalcLayout()
 	case "c":
 		m.rightMode = modeChat
 		m.activePane = paneRight
 		m.chatInput.Focus()
+		m.recalcLayout()
+	case "s":
+		if m.rightMode == modeSplit {
+			m.rightMode = modeLog
+		} else {
+			m.rightMode = modeSplit
+		}
+		m.chatInput.Blur()
+		m.recalcLayout()
 	case "enter":
 		if m.activePane == paneLeft && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			// Open logs for selected task
 			m.rightMode = modeLog
 			m.activePane = paneRight
 			return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
-		} else if m.activePane == paneRight && m.rightMode == modeChat {
+		} else if m.activePane == paneRight && m.rightMode == modeLog && !m.chatInput.Focused() {
+			// Maximize logs (toggle sidebar)
+			m.leftHidden = !m.leftHidden
+			m.recalcLayout()
+		} else if m.activePane == paneRight && m.rightMode == modeChat && !m.chatInput.Focused() {
+			// Expand sidebar if hidden, then focus input
+			if m.leftHidden {
+				m.leftHidden = false
+				m.recalcLayout()
+			}
 			m.chatInput.Focus()
 		}
 	case "x":
@@ -395,20 +481,44 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, restartTaskCmd(m.mgr, t.ID)
 			}
 		}
+	case "v":
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.rawLogContent != "" {
+			m.visualMode = !m.visualMode
+			if m.visualMode {
+				// Start visual selection at current cursor position
+				m.visualStart = m.logCursor
+			}
+			m.refreshLogContent()
+			return m, nil
+		}
+	case "y":
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.rawLogContent != "" {
+			if m.visualMode {
+				// Copy selected lines
+				selected := m.getSelectedLines()
+				m.visualMode = false
+				m.refreshLogContent()
+				if selected != "" {
+					return m, copyToClipboard(selected)
+				}
+				return m, nil
+			}
+			return m, copyToClipboard(m.rawLogContent)
+		}
 	case "/":
-		if m.activePane == paneRight && m.rightMode == modeLog {
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) {
 			m.searchMode = true
 			m.searchInput.SetValue("")
 			cmd := m.searchInput.Focus()
 			return m, cmd
 		}
 	case "n":
-		if m.activePane == paneRight && m.rightMode == modeLog && m.searchTerm != "" && len(m.searchMatches) > 0 {
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.searchTerm != "" && len(m.searchMatches) > 0 {
 			m.matchIndex = (m.matchIndex + 1) % len(m.searchMatches)
 			m.scrollToMatch()
 		}
 	case "N":
-		if m.activePane == paneRight && m.rightMode == modeLog && m.searchTerm != "" && len(m.searchMatches) > 0 {
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.searchTerm != "" && len(m.searchMatches) > 0 {
 			m.matchIndex--
 			if m.matchIndex < 0 {
 				m.matchIndex = len(m.searchMatches) - 1
@@ -416,11 +526,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.scrollToMatch()
 		}
 	case "esc":
+		if m.visualMode {
+			m.visualMode = false
+			m.refreshLogContent()
+			return m, nil
+		}
 		if m.searchTerm != "" {
 			m.searchTerm = ""
 			m.searchMatches = nil
 			m.matchIndex = 0
-			m.logViewport.SetContent(m.wrapLogContent(m.originalLogContent))
+			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
+			return m, nil
+		}
+		// Restore sidebar if hidden
+		if m.leftHidden {
+			m.leftHidden = false
+			m.recalcLayout()
 			return m, nil
 		}
 	}
@@ -447,23 +568,39 @@ func (m Model) filteredSlashCommands() []slashCommand {
 }
 
 func (m *Model) recalcLayout() {
-	var rightWidth int
-	contentHeight := m.height - 4 // status bar + borders
+	// Store reactive dimensions in model
+	m.boxHeight = m.height - 2 // account for status bar (1) + newline (1)
+	m.innerHeight = m.boxHeight - 3 // subtract border top/bottom (2) + title (1)
 
 	if m.leftHidden {
-		rightWidth = m.width - 2 // just borders
+		m.leftWidth = 0
+		m.rightWidth = m.width - 2 // just borders
 	} else {
-		leftWidth := m.width * 30 / 100
-		rightWidth = m.width - leftWidth - 3 // borders
+		m.leftWidth = m.width * 30 / 100
+		m.rightWidth = m.width - m.leftWidth - 3 // borders
 	}
 
-	m.logViewport.Width = rightWidth
-	m.logViewport.Height = contentHeight
+	if m.rightMode == modeSplit {
+		// Split mode: chat and logs side by side
+		splitWidth := m.rightWidth/2 - 1 // divide and account for border
+		chatInputHeight := 3
 
-	chatInputHeight := 3
-	m.chatViewport.Width = rightWidth
-	m.chatViewport.Height = contentHeight - chatInputHeight - 1
-	m.chatInput.SetWidth(rightWidth)
+		m.logViewport.Width = splitWidth
+		m.logViewport.Height = m.innerHeight
+
+		m.chatViewport.Width = splitWidth
+		m.chatViewport.Height = m.innerHeight - chatInputHeight - 1
+		m.chatInput.SetWidth(splitWidth)
+	} else {
+		// Single pane mode (log or chat)
+		m.logViewport.Width = m.rightWidth
+		m.logViewport.Height = m.innerHeight
+
+		chatInputHeight := 3
+		m.chatViewport.Width = m.rightWidth
+		m.chatViewport.Height = m.innerHeight - chatInputHeight - 1
+		m.chatInput.SetWidth(m.rightWidth)
+	}
 }
 
 func (m *Model) handleSaveCommand(text string) {
@@ -550,7 +687,7 @@ func (m *Model) applySearchFilter() {
 	if len(filtered) == 0 {
 		m.logViewport.SetContent(fmt.Sprintf("no matches for %q", m.searchTerm))
 	} else {
-		m.logViewport.SetContent(m.wrapLogContent(strings.Join(filtered, "\n")))
+		m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(strings.Join(filtered, "\n"))))
 	}
 	if m.matchIndex >= len(m.searchMatches) {
 		m.matchIndex = 0
@@ -588,4 +725,131 @@ func (m *Model) updateChatViewport() {
 	}
 	m.chatViewport.SetContent(content)
 	m.chatViewport.GotoBottom()
+}
+
+// addLineNumbers prepends line numbers to each line of content
+func (m *Model) addLineNumbers(content string) string {
+	lines := strings.Split(content, "\n")
+	lineNumStyle := lipgloss.NewStyle().Foreground(m.dimGrayForMode())
+	sepStyle := lipgloss.NewStyle().Foreground(m.dim())
+
+	// Calculate width needed for line numbers
+	numLines := len(lines)
+	lineNumWidth := len(fmt.Sprintf("%d", numLines))
+
+	// Selection bounds for visual mode
+	visualStart, visualEnd := m.visualStart, m.logCursor
+	if visualStart > visualEnd {
+		visualStart, visualEnd = visualEnd, visualStart
+	}
+
+	// Cursor line: subtle highlight, Selection: full highlight
+	cursorStyle := lipgloss.NewStyle().Foreground(m.bright())
+	selectedStyle := lipgloss.NewStyle().Background(m.bg()).Foreground(m.bright())
+
+	var result strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+
+		// Determine line state
+		inSelection := m.visualMode && i >= visualStart && i <= visualEnd
+		isCursor := i == m.logCursor
+
+		// Render line number with padding
+		lineNum := fmt.Sprintf("%*d", lineNumWidth, i+1)
+
+		if inSelection {
+			// Strip ANSI codes for clean highlight
+			cleanLine := ansiRegex.ReplaceAllString(line, "")
+			fullLine := lineNum + " │ " + cleanLine
+			result.WriteString(selectedStyle.Render(fullLine))
+		} else if isCursor {
+			// Cursor line: just highlight the line number and separator
+			result.WriteString(cursorStyle.Render(lineNum))
+			result.WriteString(cursorStyle.Render(" │ "))
+			result.WriteString(line)
+		} else {
+			result.WriteString(lineNumStyle.Render(lineNum))
+			result.WriteString(sepStyle.Render(" │ "))
+			result.WriteString(line)
+		}
+	}
+	return result.String()
+}
+
+// ansiRegex matches ANSI escape sequences
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// refreshLogContent refreshes the log viewport content with current line numbers and selection
+func (m *Model) refreshLogContent() {
+	// Preserve viewport position when refreshing content
+	yOffset := m.logViewport.YOffset
+	m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
+	m.logViewport.SetYOffset(yOffset)
+}
+
+// getSelectedLines returns the raw log lines within the visual selection
+func (m *Model) getSelectedLines() string {
+	if !m.visualMode {
+		return ""
+	}
+	lines := strings.Split(m.rawLogContent, "\n")
+	start, end := m.visualStart, m.logCursor
+	if start > end {
+		start, end = end, start
+	}
+
+	if start < 0 {
+		start = 0
+	}
+	if end >= len(lines) {
+		end = len(lines) - 1
+	}
+
+	if start >= len(lines) {
+		return ""
+	}
+
+	selected := lines[start : end+1]
+	return strings.Join(selected, "\n")
+}
+
+// logCursorDown moves the log cursor down one line
+func (m *Model) logCursorDown() {
+	if m.rawLogContent == "" {
+		return
+	}
+	lines := strings.Split(m.rawLogContent, "\n")
+	// Handle trailing newline
+	maxLine := len(lines) - 1
+	if maxLine > 0 && lines[maxLine] == "" {
+		maxLine--
+	}
+	if m.logCursor < maxLine {
+		m.logCursor++
+	}
+	// Calculate new viewport offset to keep cursor visible
+	viewportBottom := m.logViewport.YOffset + m.logViewport.Height - 1
+	newYOffset := m.logViewport.YOffset
+	if m.logCursor > viewportBottom {
+		newYOffset = m.logCursor - m.logViewport.Height + 1
+	}
+	m.refreshLogContent()
+	m.logViewport.SetYOffset(newYOffset)
+}
+
+// logCursorUp moves the log cursor up one line
+func (m *Model) logCursorUp() {
+	if m.logCursor > 0 {
+		m.logCursor--
+	}
+	// Calculate new viewport offset to keep cursor visible
+	newYOffset := m.logViewport.YOffset
+	if m.logCursor < m.logViewport.YOffset {
+		newYOffset = m.logCursor
+	}
+	m.refreshLogContent()
+	m.logViewport.SetYOffset(newYOffset)
 }

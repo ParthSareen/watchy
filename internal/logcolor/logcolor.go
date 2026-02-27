@@ -1,6 +1,8 @@
 package logcolor
 
 import (
+	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -17,15 +19,103 @@ var (
 	// GIN debug/warning: [GIN-debug] [WARNING] ...
 	ginWarnPattern = regexp.MustCompile(`^(\[GIN-debug\])\s+(\[WARNING\])\s+(.*)$`)
 
-	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	infoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	debugStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	msgStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
-	keyStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	valStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	// Light mode state - can be toggled at runtime
+	IsLightMode = detectLightMode()
+
+	dimStyle   = dimStyleFor(IsLightMode)
+	warnStyle  = warnStyleFor(IsLightMode)
+	errorStyle = errorStyleFor(IsLightMode)
+	infoStyle  = infoStyleFor(IsLightMode)
+	debugStyle = debugStyleFor(IsLightMode)
+	msgStyle   = msgStyleFor(IsLightMode)
+	keyStyle   = keyStyleFor(IsLightMode)
+	valStyle   = valStyleFor(IsLightMode)
 )
+
+// SetLightMode updates the color styles for the given light/dark mode
+func SetLightMode(light bool) {
+	IsLightMode = light
+	dimStyle = dimStyleFor(light)
+	warnStyle = warnStyleFor(light)
+	errorStyle = errorStyleFor(light)
+	infoStyle = infoStyleFor(light)
+	debugStyle = debugStyleFor(light)
+	msgStyle = msgStyleFor(light)
+	keyStyle = keyStyleFor(light)
+	valStyle = valStyleFor(light)
+}
+
+func detectLightMode() bool {
+	colorfgbg := os.Getenv("COLORFGBG")
+	if colorfgbg == "" {
+		return false
+	}
+	for _, part := range strings.Split(colorfgbg, ";") {
+		var val int
+		if _, err := fmt.Sscanf(part, "%d", &val); err == nil {
+			if val >= 7 && val <= 15 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dimStyleFor(light bool) lipgloss.Style {
+	if light {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+}
+
+func warnStyleFor(light bool) lipgloss.Style {
+	if light {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("202")).Bold(true)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+}
+
+func errorStyleFor(light bool) lipgloss.Style {
+	if light {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+}
+
+func infoStyleFor(light bool) lipgloss.Style {
+	if light {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("28"))
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+}
+
+func debugStyleFor(light bool) lipgloss.Style {
+	if light {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+}
+
+func msgStyleFor(light bool) lipgloss.Style {
+	if light {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Bold(true)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
+}
+
+func keyStyleFor(light bool) lipgloss.Style {
+	if light {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+}
+
+func valStyleFor(light bool) lipgloss.Style {
+	if light {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+}
 
 // Colorize applies color to a single log line if it matches known log formats.
 // Non-matching lines are returned as-is.

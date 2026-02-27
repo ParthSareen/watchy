@@ -14,6 +14,7 @@ type Config struct {
 	DBPath        string
 	ConfigPath    string
 	TicksPath     string
+	HistoryPath   string
 	RetentionDays int    `yaml:"retention_days"`
 	Model         string `yaml:"model"`
 	Theme         string `yaml:"theme"`
@@ -37,6 +38,7 @@ func New() (*Config, error) {
 
 	configPath := filepath.Join(watchyDir, "config.yaml")
 	ticksPath := filepath.Join(watchyDir, "ticks.json")
+	historyPath := filepath.Join(watchyDir, "history.jsonl")
 
 	cfg := &Config{
 		HomeDir:       watchyDir,
@@ -44,6 +46,7 @@ func New() (*Config, error) {
 		DBPath:        dbPath,
 		ConfigPath:    configPath,
 		TicksPath:     ticksPath,
+		HistoryPath:   historyPath,
 		RetentionDays: 1,
 		Model:         "glm-4.7:cloud",
 		Theme:         "green",

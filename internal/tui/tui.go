@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/config"
+	"github.com/parth/watchy/internal/store"
 	"github.com/parth/watchy/internal/task"
 	"github.com/parth/watchy/internal/tick"
 )
@@ -27,6 +28,7 @@ type mode int
 const (
 	modeLog mode = iota
 	modeChat
+	modeSplit
 )
 
 type chatMessage struct {
@@ -47,11 +49,12 @@ var slashCommands = []slashCommand{
 
 // Model is the root bubbletea model
 type Model struct {
-	mgr          *task.Manager
-	agent        *agent.Agent
-	conversation *agent.Conversation
-	cfg          *config.Config
-	tickStore    *tick.Store
+	mgr           *task.Manager
+	agent         *agent.Agent
+	conversation  *agent.Conversation
+	cfg           *config.Config
+	tickStore     *tick.Store
+	historyStore  *store.HistoryStore
 
 	tasks       []*task.Task
 	selectedIdx int
@@ -59,6 +62,7 @@ type Model struct {
 	rightMode   mode
 	leftHidden  bool
 	themeIdx    int
+	lightMode   bool
 
 	logViewport  viewport.Model
 	chatViewport viewport.Model
@@ -69,8 +73,16 @@ type Model struct {
 	agentCancel    context.CancelFunc
 	programRef     *programRef
 	slashPickerIdx int
-	width          int
-	height         int
+
+	// Terminal dimensions
+	width  int
+	height int
+
+	// Reactive layout dimensions (calculated in recalcLayout)
+	boxHeight   int // total height for border boxes
+	innerHeight int // height inside border (for viewport content)
+	leftWidth   int // width of left pane (0 if hidden)
+	rightWidth  int // width of right pane
 
 	// Log search state
 	searchMode         bool
@@ -79,10 +91,17 @@ type Model struct {
 	searchMatches      []int
 	matchIndex         int
 	originalLogContent string
+	rawLogContent      string // raw logs without colorization or line numbers
+	copied             bool   // true briefly after copying to clipboard
+
+	// Log cursor and visual selection (vim-style)
+	logCursor    int  // current cursor line in log viewport
+	visualMode   bool // true when in visual selection mode
+	visualStart  int  // starting line for selection (only valid when visualMode)
 }
 
 // New creates a new TUI model
-func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick.Store) Model {
+func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick.Store, historyStore *store.HistoryStore) Model {
 	ti := textarea.New()
 	ti.Placeholder = "Ask the agent..."
 	ti.SetHeight(3)
@@ -104,20 +123,26 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick
 		}
 	}
 
+	// Detect light mode from terminal
+	lightMode := detectLightMode()
+
 	return Model{
-		mgr:          mgr,
-		agent:        ag,
-		conversation: conv,
-		cfg:          cfg,
-		tickStore:    tickStore,
-		activePane:   paneLeft,
-		rightMode:    modeLog,
-		themeIdx:     themeIdx,
-		logViewport:  viewport.New(0, 0),
-		chatViewport: viewport.New(0, 0),
-		chatInput:    ti,
-		searchInput:  si,
-		programRef:   &programRef{},
+		mgr:           mgr,
+		agent:         ag,
+		conversation:  conv,
+		cfg:           cfg,
+		tickStore:     tickStore,
+		historyStore:  historyStore,
+		chatHistory:   loadRecentHistory(historyStore, 5),
+		activePane:    paneLeft,
+		rightMode:     modeLog,
+		themeIdx:      themeIdx,
+		lightMode:     lightMode,
+		logViewport:   viewport.New(0, 0),
+		chatViewport:  viewport.New(0, 0),
+		chatInput:     ti,
+		searchInput:   si,
+		programRef:    &programRef{},
 	}
 }
 
@@ -136,6 +161,32 @@ func (m Model) wrapLogContent(content string) string {
 		return content
 	}
 	return lipgloss.NewStyle().Width(m.logViewport.Width).Render(content)
+}
+
+// loadRecentHistory loads the last n messages from history store
+func loadRecentHistory(hs *store.HistoryStore, n int) []chatMessage {
+	if hs == nil {
+		return nil
+	}
+	recent := hs.Recent(n)
+	result := make([]chatMessage, len(recent))
+	for i, msg := range recent {
+		result[i] = chatMessage{role: msg.Role, content: msg.Content}
+	}
+	return result
+}
+
+// appendChatMessage adds a message to chat history and persists it
+func (m *Model) appendChatMessage(role, content string) {
+	m.chatHistory = append(m.chatHistory, chatMessage{role: role, content: content})
+	// Keep only last 5 in memory
+	if len(m.chatHistory) > 5 {
+		m.chatHistory = m.chatHistory[len(m.chatHistory)-5:]
+	}
+	// Persist to store
+	if m.historyStore != nil {
+		m.historyStore.Append(role, content)
+	}
 }
 
 func (m Model) Init() tea.Cmd {

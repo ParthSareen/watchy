@@ -8,7 +8,12 @@ import (
 )
 
 type tasksUpdatedMsg []*task.Task
-type logContentMsg string
+type logContentMsg struct {
+	raw      string // raw log content without colorization
+	colored  string // colorized log content
+}
+type clipboardCopiedMsg struct{}
+type clearCopiedMsg struct{}
 type agentResponseMsg string
 type agentErrorMsg struct{ err error }
 type agentToolStartMsg agent.ToolStartEvent
