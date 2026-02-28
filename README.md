@@ -24,7 +24,9 @@ Run `watchy` to open the TUI. Left pane shows tasks, right pane shows logs or ch
 
 ```
 watchy                              # launch TUI
+watchy --online                     # launch TUI using ollama.com cloud
 watchy --model llama3.1:8b          # launch TUI with a different model
+watchy --version                    # print version
 watchy start 'make serve'           # start a background task
 watchy start 'npm test' --name ci   # start with a custom name
 watchy stop 3                       # stop task 3
@@ -38,24 +40,60 @@ The `--model` flag works with any command.
 
 ## TUI keybindings
 
+### Navigation
 ```
-j/k         navigate task list
-tab         switch pane
-l           show logs for selected task
-c           open chat (focuses input immediately)
-x           stop selected task
-esc         cancel in-flight agent request
-q           quit
-ctrl+c      quit (works even in chat input)
+j/k or ↑/↓   navigate task list / scroll logs / move cursor
+g            go to top of logs
+G            go to bottom of logs
+tab          cycle: sidebar → logs → chat → sidebar
+h            hide/show sidebar
+enter        open logs for selected task / maximize logs pane
 ```
 
-The chat pane shows tool calls as they happen -- you see what the agent is doing before it executes. You can ask follow-up questions; the conversation persists for the session.
+### Logs
+```
+l            show logs for selected task
+/            search in logs
+n            next search match
+N            previous search match
+v            toggle visual mode (select lines with cursor)
+y            copy to clipboard (selection in visual mode, or all logs)
+s            split view (logs + chat side-by-side)
+```
+
+### Tasks
+```
+x            stop selected task
+r            restart stopped/crashed task
+```
+
+### Chat
+```
+c            open chat (focuses input immediately)
+ctrl+left    switch from chat to logs
+esc          cancel in-flight agent request
+```
+
+### Display
+```
+t            cycle theme (green/blue/purple/orange/pink/cyan/red/white)
+m            toggle light/dark mode
+```
+
+### General
+```
+q            quit
+ctrl+c       quit (works even in chat input)
+```
 
 ## Chat commands
 
 ```
 /model              show current model
 /model llama3.1:8b  switch model mid-session
+/save <name>        save last agent-started task as a tick
+/save <name> <cmd>  save a command as a named tick
+/new                clear chat history
 ```
 
 ## Agent tools
@@ -77,7 +115,10 @@ Optional config at `~/.watchy/config.yaml`:
 ```yaml
 retention_days: 1
 model: "glm-4.7:cloud"
+theme: "green"
 ```
+
+Available themes: `green`, `blue`, `purple`, `orange`, `pink`, `cyan`, `red`, `white`. Use `t` in the TUI to cycle through them, or `m` to toggle light/dark mode for your terminal background.
 
 You can also set the model per-session with `--model` or `/model` in chat. Config file values are used as defaults.
 
