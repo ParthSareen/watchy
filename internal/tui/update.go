@@ -42,11 +42,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case logContentMsg:
+		oldTotalLines := m.totalLogLines()
+		cursorAtBottom := oldTotalLines > 0 && m.cursorLine >= oldTotalLines-1
+
 		m.rawLogContent = msg.raw
 		m.originalLogContent = msg.colored
+
+		newTotalLines := m.totalLogLines()
+
+		// Update cursor position
+		if newTotalLines == 0 {
+			m.cursorLine = 0
+		} else if cursorAtBottom {
+			// Keep cursor at bottom if it was at bottom
+			m.cursorLine = newTotalLines - 1
+		} else if m.cursorLine >= newTotalLines {
+			// Clamp cursor if content shrunk
+			m.cursorLine = newTotalLines - 1
+		}
+
+		// Exit visual mode when content changes (selection would be invalid)
+		if m.visualMode && oldTotalLines != newTotalLines {
+			m.visualMode = false
+		}
+
 		atBottom := m.logViewport.AtBottom()
 		offset := m.logViewport.YOffset
-		cursor := m.logCursor // Preserve cursor position
 
 		if m.searchTerm != "" {
 			m.applySearchFilter()
@@ -54,20 +75,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(msg.colored)))
 		}
 
-		// Update cursor position only if following at bottom
+		// Preserve scroll position when not at bottom
 		if atBottom {
 			m.logViewport.GotoBottom()
-			// Set cursor to last line
-			lines := strings.Count(m.rawLogContent, "\n")
-			if !strings.HasSuffix(m.rawLogContent, "\n") && m.rawLogContent != "" {
-				lines++
-			}
-			if lines > 0 {
-				m.logCursor = lines - 1
-			}
 		} else {
 			m.logViewport.SetYOffset(offset)
-			m.logCursor = cursor // Restore cursor position
 		}
 		return m, nil
 
@@ -129,6 +141,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case selectTaskMsg:
 		m.selectedIdx = int(msg)
+		m.cursorLine = 0 // Reset cursor when switching tasks
+		m.visualMode = false
 		if (m.rightMode == modeLog || m.rightMode == modeSplit) && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID)
 		}
@@ -340,7 +354,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		} else if m.activePane == paneRight {
 			if m.rightMode == modeLog || m.rightMode == modeSplit {
-				m.logCursorDown()
+				totalLines := m.totalLogLines()
+				if totalLines > 0 && m.cursorLine < totalLines-1 {
+					m.cursorLine++
+					// Set content first
+					m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
+					// Ensure cursor is visible
+					if m.cursorLine >= m.logViewport.YOffset+m.logViewport.Height {
+						m.logViewport.SetYOffset(m.cursorLine - m.logViewport.Height + 1)
+					}
+				}
 			} else {
 				m.chatViewport.LineDown(1)
 			}
@@ -356,28 +379,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		} else if m.activePane == paneRight {
 			if m.rightMode == modeLog || m.rightMode == modeSplit {
-				m.logCursorUp()
+				if m.cursorLine > 0 {
+					m.cursorLine--
+					// Set content first
+					m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
+					// Ensure cursor is visible
+					if m.cursorLine < m.logViewport.YOffset {
+						m.logViewport.SetYOffset(m.cursorLine)
+					}
+				}
 			} else {
 				m.chatViewport.LineUp(1)
 			}
 		}
 	case "g":
 		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) {
-			m.logCursor = 0
-			m.refreshLogContent()
+			m.cursorLine = 0
+			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
 			m.logViewport.GotoTop()
 		}
 	case "G":
 		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) {
-			// Set cursor to last line
-			lines := strings.Count(m.rawLogContent, "\n")
-			if !strings.HasSuffix(m.rawLogContent, "\n") && m.rawLogContent != "" {
-				lines++
+			totalLines := m.totalLogLines()
+			if totalLines > 0 {
+				m.cursorLine = totalLines - 1
 			}
-			if lines > 0 {
-				m.logCursor = lines - 1
-			}
-			m.refreshLogContent()
+			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
 			m.logViewport.GotoBottom()
 		}
 	case "tab":
@@ -485,8 +512,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.rawLogContent != "" {
 			m.visualMode = !m.visualMode
 			if m.visualMode {
-				// Start visual selection at current cursor position
-				m.visualStart = m.logCursor
+				// Start visual selection at cursor position
+				m.visualStart = m.cursorLine
 			}
 			m.refreshLogContent()
 			return m, nil
@@ -732,20 +759,18 @@ func (m *Model) addLineNumbers(content string) string {
 	lines := strings.Split(content, "\n")
 	lineNumStyle := lipgloss.NewStyle().Foreground(m.dimGrayForMode())
 	sepStyle := lipgloss.NewStyle().Foreground(m.dim())
+	cursorStyle := lipgloss.NewStyle().Bold(true).Foreground(m.bright())
+	selectedStyle := lipgloss.NewStyle().Background(m.bg()).Foreground(m.bright())
 
 	// Calculate width needed for line numbers
 	numLines := len(lines)
 	lineNumWidth := len(fmt.Sprintf("%d", numLines))
 
-	// Selection bounds for visual mode
-	visualStart, visualEnd := m.visualStart, m.logCursor
-	if visualStart > visualEnd {
-		visualStart, visualEnd = visualEnd, visualStart
+	// Selection bounds for visual mode (cursorLine is selection end)
+	start, end := m.visualStart, m.cursorLine
+	if start > end {
+		start, end = end, start
 	}
-
-	// Cursor line: subtle highlight, Selection: full highlight
-	cursorStyle := lipgloss.NewStyle().Foreground(m.bright())
-	selectedStyle := lipgloss.NewStyle().Background(m.bg()).Foreground(m.bright())
 
 	var result strings.Builder
 	for i, line := range lines {
@@ -753,12 +778,13 @@ func (m *Model) addLineNumbers(content string) string {
 			result.WriteString("\n")
 		}
 
-		// Determine line state
-		inSelection := m.visualMode && i >= visualStart && i <= visualEnd
-		isCursor := i == m.logCursor
-
 		// Render line number with padding
 		lineNum := fmt.Sprintf("%*d", lineNumWidth, i+1)
+
+		// Check if in selection (visual mode)
+		inSelection := m.visualMode && i >= start && i <= end
+		// Check if cursor line (normal mode)
+		isCursor := !m.visualMode && i == m.cursorLine
 
 		if inSelection {
 			// Strip ANSI codes for clean highlight
@@ -766,9 +792,9 @@ func (m *Model) addLineNumbers(content string) string {
 			fullLine := lineNum + " │ " + cleanLine
 			result.WriteString(selectedStyle.Render(fullLine))
 		} else if isCursor {
-			// Cursor line: just highlight the line number and separator
+			// Show cursor with bold line number and arrow
 			result.WriteString(cursorStyle.Render(lineNum))
-			result.WriteString(cursorStyle.Render(" │ "))
+			result.WriteString(cursorStyle.Render(" ► "))
 			result.WriteString(line)
 		} else {
 			result.WriteString(lineNumStyle.Render(lineNum))
@@ -781,6 +807,18 @@ func (m *Model) addLineNumbers(content string) string {
 
 // ansiRegex matches ANSI escape sequences
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// totalLogLines returns the total number of lines in the raw log content
+func (m *Model) totalLogLines() int {
+	if m.rawLogContent == "" {
+		return 0
+	}
+	totalLines := strings.Count(m.rawLogContent, "\n")
+	if !strings.HasSuffix(m.rawLogContent, "\n") {
+		totalLines++
+	}
+	return totalLines
+}
 
 // refreshLogContent refreshes the log viewport content with current line numbers and selection
 func (m *Model) refreshLogContent() {
@@ -796,7 +834,7 @@ func (m *Model) getSelectedLines() string {
 		return ""
 	}
 	lines := strings.Split(m.rawLogContent, "\n")
-	start, end := m.visualStart, m.logCursor
+	start, end := m.visualStart, m.cursorLine
 	if start > end {
 		start, end = end, start
 	}
@@ -814,42 +852,4 @@ func (m *Model) getSelectedLines() string {
 
 	selected := lines[start : end+1]
 	return strings.Join(selected, "\n")
-}
-
-// logCursorDown moves the log cursor down one line
-func (m *Model) logCursorDown() {
-	if m.rawLogContent == "" {
-		return
-	}
-	lines := strings.Split(m.rawLogContent, "\n")
-	// Handle trailing newline
-	maxLine := len(lines) - 1
-	if maxLine > 0 && lines[maxLine] == "" {
-		maxLine--
-	}
-	if m.logCursor < maxLine {
-		m.logCursor++
-	}
-	// Calculate new viewport offset to keep cursor visible
-	viewportBottom := m.logViewport.YOffset + m.logViewport.Height - 1
-	newYOffset := m.logViewport.YOffset
-	if m.logCursor > viewportBottom {
-		newYOffset = m.logCursor - m.logViewport.Height + 1
-	}
-	m.refreshLogContent()
-	m.logViewport.SetYOffset(newYOffset)
-}
-
-// logCursorUp moves the log cursor up one line
-func (m *Model) logCursorUp() {
-	if m.logCursor > 0 {
-		m.logCursor--
-	}
-	// Calculate new viewport offset to keep cursor visible
-	newYOffset := m.logViewport.YOffset
-	if m.logCursor < m.logViewport.YOffset {
-		newYOffset = m.logCursor
-	}
-	m.refreshLogContent()
-	m.logViewport.SetYOffset(newYOffset)
 }

@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/config"
 	"github.com/parth/watchy/internal/store"
@@ -94,10 +93,10 @@ type Model struct {
 	rawLogContent      string // raw logs without colorization or line numbers
 	copied             bool   // true briefly after copying to clipboard
 
-	// Log cursor and visual selection (vim-style)
-	logCursor    int  // current cursor line in log viewport
-	visualMode   bool // true when in visual selection mode
-	visualStart  int  // starting line for selection (only valid when visualMode)
+	// Cursor and visual selection (vim-style)
+	cursorLine  int  // current cursor line (0-indexed)
+	visualMode  bool // true when in visual selection mode
+	visualStart int  // anchor line when v was pressed
 }
 
 // New creates a new TUI model
@@ -155,12 +154,10 @@ func (m Model) SetProgram(p *tea.Program) {
 	m.programRef.p = p
 }
 
-// wrapLogContent wraps text to fit the viewport width for line wrapping.
+// wrapLogContent is disabled - returns content as-is to ensure raw lines map 1:1 to visual lines.
+// This keeps cursor tracking simple and correct.
 func (m Model) wrapLogContent(content string) string {
-	if m.logViewport.Width <= 0 {
-		return content
-	}
-	return lipgloss.NewStyle().Width(m.logViewport.Width).Render(content)
+	return content
 }
 
 // loadRecentHistory loads the last n messages from history store
