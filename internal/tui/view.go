@@ -119,12 +119,30 @@ func (m Model) View() string {
 		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			rightTitle = fmt.Sprintf("Logs [%d: %s]", m.tasks[m.selectedIdx].ID, m.tasks[m.selectedIdx].Name)
 		}
+		// Show line number range when available
+		if len(m.logLineNumbers) > 0 && m.searchTerm == "" {
+			firstLine := m.logLineNumbers[0]
+			lastLine := m.logLineNumbers[len(m.logLineNumbers)-1]
+			if firstLine == lastLine {
+				rightTitle += fmt.Sprintf(" [L%d]", firstLine)
+			} else {
+				rightTitle += fmt.Sprintf(" [L%d-%d]", firstLine, lastLine)
+			}
+		}
 		if m.searchTerm != "" && !m.searchMode {
-			rightTitle += fmt.Sprintf(" [%q %d/%d]", m.searchTerm, m.matchIndex+1, len(m.searchMatches))
+			// Show original line number for current match
+			matchLine := ""
+			if m.matchIndex < len(m.searchMatchLines) {
+				matchLine = fmt.Sprintf(" L%d", m.searchMatchLines[m.matchIndex])
+			}
+			rightTitle += fmt.Sprintf(" [%q %d/%d%s]", m.searchTerm, m.matchIndex+1, len(m.searchMatches), matchLine)
 		}
 		rightContent := m.logViewport.View()
 		if m.searchMode {
 			rightContent += "\n" + m.searchInput.View()
+		}
+		if m.commandMode {
+			rightContent += "\n" + m.commandInput.View()
 		}
 		rightPane = m.applyBorder(paneRight, m.rightWidth, m.boxHeight, rightTitle, rightContent)
 	} else if m.rightMode == modeChat {
@@ -141,8 +159,23 @@ func (m Model) View() string {
 		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			logsTitle = fmt.Sprintf("Logs [%d: %s]", m.tasks[m.selectedIdx].ID, m.tasks[m.selectedIdx].Name)
 		}
+		// Show line number range when available
+		if len(m.logLineNumbers) > 0 && m.searchTerm == "" {
+			firstLine := m.logLineNumbers[0]
+			lastLine := m.logLineNumbers[len(m.logLineNumbers)-1]
+			if firstLine == lastLine {
+				logsTitle += fmt.Sprintf(" [L%d]", firstLine)
+			} else {
+				logsTitle += fmt.Sprintf(" [L%d-%d]", firstLine, lastLine)
+			}
+		}
 		if m.searchTerm != "" && !m.searchMode {
-			logsTitle += fmt.Sprintf(" [%q %d/%d]", m.searchTerm, m.matchIndex+1, len(m.searchMatches))
+			// Show original line number for current match
+			matchLine := ""
+			if m.matchIndex < len(m.searchMatchLines) {
+				matchLine = fmt.Sprintf(" L%d", m.searchMatchLines[m.matchIndex])
+			}
+			logsTitle += fmt.Sprintf(" [%q %d/%d%s]", m.searchTerm, m.matchIndex+1, len(m.searchMatches), matchLine)
 		}
 		logsContent := m.logViewport.View()
 		if m.searchMode {
@@ -282,12 +315,24 @@ func (m Model) renderStatusBar() string {
 
 	var parts []string
 
+	if m.pendingCount > 0 {
+		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render(fmt.Sprintf("[%d]", m.pendingCount)))
+	}
+
 	if m.copied {
 		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[copied!]"))
 	}
 
 	if m.visualMode {
 		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[visual]"))
+	}
+
+	if m.commandMode {
+		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[command]"))
+	}
+
+	if m.commandMode {
+		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[command]"))
 	}
 
 	if m.agentBusy {
@@ -298,7 +343,7 @@ func (m Model) renderStatusBar() string {
 	if m.lightMode {
 		modeIndicator = "light"
 	}
-	keys := fmt.Sprintf("j/k:nav  g/G:top/bottom  v:visual  y:copy  /:search  n/N:match  tab:cycle  t:theme(%s)  m:mode(%s)  x:stop  r:restart  q:quit", m.theme().name, modeIndicator)
+	keys := fmt.Sprintf("j/k:nav  g/G:top/bottom  v:visual  y:copy  /:search  n/N:match  ::goto  tab:cycle  t:theme(%s)  m:mode(%s)  x:stop  r:restart  q:quit", m.theme().name, modeIndicator)
 	parts = append(parts, dimStyle.Render(keys))
 
 	return strings.Join(parts, "  ")

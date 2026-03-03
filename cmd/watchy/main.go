@@ -263,14 +263,14 @@ func cmdLogs(mgr *task.Manager, args []string) {
 		}
 	}
 
-	logLines, err := mgr.TailLogs(id, lines)
+	result, err := mgr.TailLogs(id, lines)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
 	}
 
-	for _, line := range logLines {
-		fmt.Println(line)
+	for _, line := range result.Lines {
+		fmt.Println(line.Content)
 	}
 }
 

@@ -124,7 +124,20 @@ func (m *Manager) GetTask(id int) (*Task, error) {
 
 // TailLogs reads the last N lines from a task's log file.
 // If lines is 0, all lines are returned.
-func (m *Manager) TailLogs(id int, lines int) ([]string, error) {
+// LogLine represents a single line from a log file with its original line number
+type LogLine struct {
+	LineNum int    // Original 1-indexed line number in the file
+	Content string // Line content
+}
+
+// TailLogsResult contains the result of tailing logs with line number information
+type TailLogsResult struct {
+	Lines     []LogLine // Log lines with original line numbers
+	StartLine int       // Starting line number (1-indexed)
+	TotalLines int     // Total lines in the file
+}
+
+func (m *Manager) TailLogs(id int, lines int) (*TailLogsResult, error) {
 	task, err := m.storage.GetTask(id)
 	if err != nil {
 		return nil, err
@@ -146,10 +159,32 @@ func (m *Manager) TailLogs(id int, lines int) ([]string, error) {
 		return nil, fmt.Errorf("failed to read log file: %w", err)
 	}
 
-	if lines <= 0 || len(allLines) <= lines {
-		return allLines, nil
+	totalLines := len(allLines)
+
+	if lines <= 0 || totalLines <= lines {
+		// Return all lines
+		result := make([]LogLine, totalLines)
+		for i, content := range allLines {
+			result[i] = LogLine{LineNum: i + 1, Content: content}
+		}
+		return &TailLogsResult{
+			Lines:      result,
+			StartLine:  1,
+			TotalLines: totalLines,
+		}, nil
 	}
-	return allLines[len(allLines)-lines:], nil
+
+	// Return last N lines
+	startIdx := totalLines - lines
+	result := make([]LogLine, lines)
+	for i := 0; i < lines; i++ {
+		result[i] = LogLine{LineNum: startIdx + i + 1, Content: allLines[startIdx+i]}
+	}
+	return &TailLogsResult{
+		Lines:      result,
+		StartLine:  startIdx + 1,
+		TotalLines: totalLines,
+	}, nil
 }
 
 // CheckPID checks if a PID is still running

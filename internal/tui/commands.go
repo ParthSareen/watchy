@@ -25,20 +25,27 @@ func fetchTasks(mgr *task.Manager) tea.Cmd {
 
 func fetchLogs(mgr *task.Manager, taskID int) tea.Cmd {
 	return func() tea.Msg {
-		lines, err := mgr.TailLogs(taskID, 0)
+		result, err := mgr.TailLogs(taskID, 0)
 		if err != nil {
 			return logContentMsg{}
 		}
 		var raw, colored strings.Builder
-		for i, line := range lines {
+		lineNumbers := make([]int, len(result.Lines))
+		for i, line := range result.Lines {
 			if i > 0 {
 				raw.WriteString("\n")
 				colored.WriteString("\n")
 			}
-			raw.WriteString(line)
-			colored.WriteString(logcolor.Colorize(line))
+			raw.WriteString(line.Content)
+			colored.WriteString(logcolor.Colorize(line.Content))
+			lineNumbers[i] = line.LineNum
 		}
-		return logContentMsg{raw: raw.String(), colored: colored.String()}
+		return logContentMsg{
+			raw:         raw.String(),
+			colored:     colored.String(),
+			startLine:   result.StartLine,
+			lineNumbers: lineNumbers,
+		}
 	}
 }
 

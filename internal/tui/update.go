@@ -47,6 +47,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.rawLogContent = msg.raw
 		m.originalLogContent = msg.colored
+		m.logLineNumbers = msg.lineNumbers
 
 		newTotalLines := m.totalLogLines()
 
@@ -219,6 +220,56 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Command mode input handling (for :<line_number>)
+	if m.commandMode {
+		switch key {
+		case "enter":
+			cmd := m.commandInput.Value()
+			m.commandMode = false
+			m.commandInput.Blur()
+			// Parse line number and jump to it
+			var lineNum int
+			if n, err := fmt.Sscanf(cmd, "%d", &lineNum); err == nil && n == 1 {
+				// Convert to 0-indexed display line
+				targetDisplayLine := -1
+				for i, origLineNum := range m.logLineNumbers {
+					if origLineNum == lineNum {
+						targetDisplayLine = i
+						break
+					}
+					if origLineNum > lineNum {
+						// Line number is between available lines, go to previous line
+						targetDisplayLine = i - 1
+						if targetDisplayLine < 0 {
+							targetDisplayLine = 0
+						}
+						break
+					}
+				}
+				if targetDisplayLine >= 0 {
+					m.cursorLine = targetDisplayLine
+					m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
+					// Ensure cursor is visible
+					if m.cursorLine < m.logViewport.YOffset {
+						m.logViewport.SetYOffset(m.cursorLine)
+					} else if m.cursorLine >= m.logViewport.YOffset+m.logViewport.Height {
+						m.logViewport.SetYOffset(m.cursorLine - m.logViewport.Height + 1)
+					}
+				}
+			}
+			return m, nil
+		case "esc":
+			m.commandMode = false
+			m.commandInput.Blur()
+			m.commandInput.SetValue("")
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.commandInput, cmd = m.commandInput.Update(msg)
+			return m, cmd
+		}
+	}
+
 	// Global quit
 	if key == "q" || key == "ctrl+c" {
 		if m.activePane == paneRight && m.rightMode == modeChat && m.chatInput.Focused() {
@@ -343,9 +394,40 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		// Build pending count for numbered motions (e.g., "5j" to move down 5 lines)
+		var digit int
+		fmt.Sscanf(key, "%d", &digit)
+		m.pendingCount = m.pendingCount*10 + digit
+		return m, nil
+	case "0":
+		// 0 without pending count = go to start of line (horizontal)
+		if m.pendingCount == 0 {
+			if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.rawLogContent != "" {
+				m.logXOffset = 0
+				m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
+			}
+		} else {
+			// 0 as part of a number (e.g., "10j")
+			m.pendingCount = m.pendingCount * 10
+		}
+		return m, nil
+	case ":":
+		// Enter command mode to jump to a specific line
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.rawLogContent != "" {
+			m.commandMode = true
+			m.commandInput.SetValue("")
+			cmd := m.commandInput.Focus()
+			return m, cmd
+		}
 	case "j", "down":
+		count := m.pendingCount
+		if count == 0 {
+			count = 1
+		}
+		m.pendingCount = 0
 		if m.activePane == paneLeft && len(m.tasks) > 0 {
-			m.selectedIdx++
+			m.selectedIdx += count
 			if m.selectedIdx >= len(m.tasks) {
 				m.selectedIdx = len(m.tasks) - 1
 			}
@@ -356,7 +438,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.rightMode == modeLog || m.rightMode == modeSplit {
 				totalLines := m.totalLogLines()
 				if totalLines > 0 && m.cursorLine < totalLines-1 {
-					m.cursorLine++
+					m.cursorLine += count
+					if m.cursorLine >= totalLines {
+						m.cursorLine = totalLines - 1
+					}
 					// Set content first
 					m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
 					// Ensure cursor is visible
@@ -365,12 +450,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 				}
 			} else {
-				m.chatViewport.LineDown(1)
+				for i := 0; i < count; i++ {
+					m.chatViewport.LineDown(1)
+				}
 			}
 		}
 	case "k", "up":
+		count := m.pendingCount
+		if count == 0 {
+			count = 1
+		}
+		m.pendingCount = 0
 		if m.activePane == paneLeft && len(m.tasks) > 0 {
-			m.selectedIdx--
+			m.selectedIdx -= count
 			if m.selectedIdx < 0 {
 				m.selectedIdx = 0
 			}
@@ -380,7 +472,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.activePane == paneRight {
 			if m.rightMode == modeLog || m.rightMode == modeSplit {
 				if m.cursorLine > 0 {
-					m.cursorLine--
+					m.cursorLine -= count
+					if m.cursorLine < 0 {
+						m.cursorLine = 0
+					}
 					// Set content first
 					m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
 					// Ensure cursor is visible
@@ -406,6 +501,42 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
 			m.logViewport.GotoBottom()
+		}
+	case "^":
+		// Scroll horizontally to start of line
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.rawLogContent != "" {
+			m.logXOffset = 0
+			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
+		}
+	case ">":
+		// Scroll right by 20 chars
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.rawLogContent != "" {
+			maxLen := m.maxLineLength()
+			lineNumWidth := len(fmt.Sprintf("%d", m.totalLogLines()))
+			prefixWidth := lineNumWidth + 3
+			contentWidth := m.logViewport.Width - prefixWidth
+			if contentWidth <= 0 {
+				contentWidth = 80
+			}
+			maxOffset := maxLen - contentWidth
+			if maxOffset < 0 {
+				maxOffset = 0
+			}
+			m.logXOffset += 20
+			if m.logXOffset > maxOffset {
+				m.logXOffset = maxOffset
+			}
+			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
+		}
+	case "<":
+		// Scroll left by 20 chars
+		if m.activePane == paneRight && (m.rightMode == modeLog || m.rightMode == modeSplit) && m.rawLogContent != "" {
+			if m.logXOffset >= 20 {
+				m.logXOffset -= 20
+			} else {
+				m.logXOffset = 0
+			}
+			m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(m.originalLogContent)))
 		}
 	case "tab":
 		// Cycle: sidebar → logs → chat → sidebar
@@ -704,17 +835,37 @@ func (m *Model) applySearchFilter() {
 	lines := strings.Split(m.originalLogContent, "\n")
 	termLower := strings.ToLower(m.searchTerm)
 	m.searchMatches = nil
+	m.searchMatchLines = nil
 	var filtered []string
-	for _, line := range lines {
+	for i, line := range lines {
 		if strings.Contains(strings.ToLower(line), termLower) {
 			m.searchMatches = append(m.searchMatches, len(filtered))
+			// Store the original line number for this match
+			origLineNum := i + 1
+			if i < len(m.logLineNumbers) {
+				origLineNum = m.logLineNumbers[i]
+			}
+			m.searchMatchLines = append(m.searchMatchLines, origLineNum)
 			filtered = append(filtered, line)
 		}
 	}
 	if len(filtered) == 0 {
 		m.logViewport.SetContent(fmt.Sprintf("no matches for %q", m.searchTerm))
 	} else {
+		// Create filtered line numbers for display
+		filteredLineNumbers := make([]int, len(filtered))
+		for i := range filtered {
+			if i < len(m.searchMatchLines) {
+				filteredLineNumbers[i] = m.searchMatchLines[i]
+			} else {
+				filteredLineNumbers[i] = i + 1
+			}
+		}
+		// Temporarily set logLineNumbers to filtered line numbers for addLineNumbers
+		oldLineNumbers := m.logLineNumbers
+		m.logLineNumbers = filteredLineNumbers
 		m.logViewport.SetContent(m.wrapLogContent(m.addLineNumbers(strings.Join(filtered, "\n"))))
+		m.logLineNumbers = oldLineNumbers
 	}
 	if m.matchIndex >= len(m.searchMatches) {
 		m.matchIndex = 0
@@ -762,9 +913,16 @@ func (m *Model) addLineNumbers(content string) string {
 	cursorStyle := lipgloss.NewStyle().Bold(true).Foreground(m.bright())
 	selectedStyle := lipgloss.NewStyle().Background(m.bg()).Foreground(m.bright())
 
-	// Calculate width needed for line numbers
-	numLines := len(lines)
-	lineNumWidth := len(fmt.Sprintf("%d", numLines))
+	// Calculate width needed for line numbers based on max possible line number
+	maxLineNum := len(lines)
+	if len(m.logLineNumbers) > 0 {
+		for _, ln := range m.logLineNumbers {
+			if ln > maxLineNum {
+				maxLineNum = ln
+			}
+		}
+	}
+	lineNumWidth := len(fmt.Sprintf("%d", maxLineNum))
 
 	// Selection bounds for visual mode (cursorLine is selection end)
 	start, end := m.visualStart, m.cursorLine
@@ -778,31 +936,78 @@ func (m *Model) addLineNumbers(content string) string {
 			result.WriteString("\n")
 		}
 
+		// Get the original line number
+		lineNum := i + 1
+		if i < len(m.logLineNumbers) {
+			lineNum = m.logLineNumbers[i]
+		}
+
 		// Render line number with padding
-		lineNum := fmt.Sprintf("%*d", lineNumWidth, i+1)
+		lineNumStr := fmt.Sprintf("%*d", lineNumWidth, lineNum)
 
 		// Check if in selection (visual mode)
 		inSelection := m.visualMode && i >= start && i <= end
 		// Check if cursor line (normal mode)
 		isCursor := !m.visualMode && i == m.cursorLine
 
+		// Apply horizontal scroll offset while preserving ANSI codes
+		displayLine := skipANSI(line, m.logXOffset)
+
 		if inSelection {
 			// Strip ANSI codes for clean highlight
-			cleanLine := ansiRegex.ReplaceAllString(line, "")
-			fullLine := lineNum + " │ " + cleanLine
+			cleanLine := ansiRegex.ReplaceAllString(displayLine, "")
+			fullLine := lineNumStr + " │ " + cleanLine
 			result.WriteString(selectedStyle.Render(fullLine))
 		} else if isCursor {
 			// Show cursor with bold line number and arrow
-			result.WriteString(cursorStyle.Render(lineNum))
+			result.WriteString(cursorStyle.Render(lineNumStr))
 			result.WriteString(cursorStyle.Render(" ► "))
-			result.WriteString(line)
+			result.WriteString(displayLine)
 		} else {
-			result.WriteString(lineNumStyle.Render(lineNum))
+			result.WriteString(lineNumStyle.Render(lineNumStr))
 			result.WriteString(sepStyle.Render(" │ "))
-			result.WriteString(line)
+			result.WriteString(displayLine)
 		}
 	}
 	return result.String()
+}
+
+// skipANSI skips n visible characters while preserving ANSI escape codes
+func skipANSI(s string, offset int) string {
+	if offset <= 0 {
+		return s
+	}
+
+	visible := 0
+	inEscape := false
+	i := 0
+
+	for i < len(s) {
+		if s[i] == '\x1b' {
+			// Start of ANSI escape sequence
+			inEscape = true
+			i++
+			continue
+		}
+
+		if inEscape {
+			// Check for end of escape sequence (usually 'm')
+			if s[i] >= 'A' && s[i] <= 'Z' {
+				inEscape = false
+			}
+			i++
+			continue
+		}
+
+		// Visible character
+		if visible >= offset {
+			return s[i:]
+		}
+		visible++
+		i++
+	}
+
+	return ""
 }
 
 // ansiRegex matches ANSI escape sequences
@@ -819,6 +1024,23 @@ func (m *Model) totalLogLines() int {
 	}
 	return totalLines
 }
+
+// maxLineLength returns the length of the longest line (ANSI codes stripped)
+func (m *Model) maxLineLength() int {
+	if m.originalLogContent == "" {
+		return 0
+	}
+	lines := strings.Split(m.originalLogContent, "\n")
+	maxLen := 0
+	for _, line := range lines {
+		plain := ansiRegex.ReplaceAllString(line, "")
+		if len(plain) > maxLen {
+			maxLen = len(plain)
+		}
+	}
+	return maxLen
+}
+
 
 // refreshLogContent refreshes the log viewport content with current line numbers and selection
 func (m *Model) refreshLogContent() {

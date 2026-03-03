@@ -83,20 +83,32 @@ type Model struct {
 	leftWidth   int // width of left pane (0 if hidden)
 	rightWidth  int // width of right pane
 
+	// Pending count for vim-style motions (e.g., 5j moves down 5 lines)
+	pendingCount int
+
+	// Command mode for :<line_number>
+	commandMode  bool
+	commandInput textinput.Model
+
 	// Log search state
 	searchMode         bool
 	searchInput        textinput.Model
 	searchTerm         string
-	searchMatches      []int
+	searchMatches      []int // indices into displayed lines (not original line numbers)
+	searchMatchLines   []int // original line numbers for each match
 	matchIndex         int
 	originalLogContent string
 	rawLogContent      string // raw logs without colorization or line numbers
+	logLineNumbers     []int  // original line number for each line in logContent
 	copied             bool   // true briefly after copying to clipboard
 
 	// Cursor and visual selection (vim-style)
 	cursorLine  int  // current cursor line (0-indexed)
 	visualMode  bool // true when in visual selection mode
 	visualStart int  // anchor line when v was pressed
+
+	// Horizontal scroll for logs
+	logXOffset int
 }
 
 // New creates a new TUI model
@@ -110,6 +122,9 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick
 	si.Placeholder = "Search..."
 	si.Prompt = "/"
 	si.Width = 30
+
+	ci := textinput.New()
+	ci.Prompt = ":"
 
 	conv := ag.NewConversation()
 
@@ -141,6 +156,7 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick
 		chatViewport:  viewport.New(0, 0),
 		chatInput:     ti,
 		searchInput:   si,
+		commandInput:  ci,
 		programRef:    &programRef{},
 	}
 }
