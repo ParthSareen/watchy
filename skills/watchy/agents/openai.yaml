@@ -1,0 +1,4 @@
+interface:
+  display_name: "Watchy"
+  short_description: "Run and monitor persistent background servers"
+  default_prompt: "Use $watchy to start this server in the background and show me how to follow its logs."
