@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"sort"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -83,6 +84,33 @@ func (a *Agent) Model() string {
 	return a.model
 }
 
+// ListModels returns the model names available from the configured Ollama host.
+func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
+	response, err := a.client.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list Ollama models: %w", err)
+	}
+
+	models := make([]string, 0, len(response.Models))
+	seen := make(map[string]struct{}, len(response.Models))
+	for _, model := range response.Models {
+		name := model.Name
+		if name == "" {
+			name = model.Model
+		}
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		models = append(models, name)
+	}
+	sort.Strings(models)
+	return models, nil
+}
+
 // Conversation holds persistent chat state
 type Conversation struct {
 	agent    *Agent
@@ -108,8 +136,8 @@ func (c *Conversation) buildSystemPrompt() {
 
 	var tasksContext string
 	for _, t := range allTasks {
-		tasksContext += fmt.Sprintf("  - [%d] %s | cmd: %s | status: %s | pid: %d | log: %s\n",
-			t.ID, t.Name, t.Command, t.Status, t.PID, t.LogPath)
+		tasksContext += fmt.Sprintf("  - [%d] %s | cmd: %s | dir: %s | status: %s | pid: %d | log: %s\n",
+			t.ID, t.Name, t.Command, t.WorkDir, t.Status, t.PID, t.LogPath)
 	}
 
 	cwd, _ := os.Getwd()
@@ -148,6 +176,17 @@ Be concise. Show what you did and what happened, not what you could do.`, hostna
 // RefreshSystemPrompt rebuilds the system prompt with current task state
 func (c *Conversation) RefreshSystemPrompt() {
 	c.buildSystemPrompt()
+}
+
+// AppendHistory restores prior user/assistant messages into the model context.
+func (c *Conversation) AppendHistory(role, content string) {
+	switch role {
+	case "user":
+		c.messages = append(c.messages, api.Message{Role: "user", Content: content})
+	case "agent", "assistant":
+		c.messages = append(c.messages, api.Message{Role: "assistant", Content: content})
+	}
+	c.trimContext()
 }
 
 // SendWithEvents sends a message and streams tool call events back via the callback.
@@ -279,8 +318,8 @@ func (a *Agent) Ask(taskID int, question string) (string, error) {
 		if t.ID == taskID {
 			marker = " <-- FOCUSED"
 		}
-		tasksContext += fmt.Sprintf("  - [%d] %s | cmd: %s | status: %s | pid: %d | log: %s%s\n",
-			t.ID, t.Name, t.Command, t.Status, t.PID, t.LogPath, marker)
+		tasksContext += fmt.Sprintf("  - [%d] %s | cmd: %s | dir: %s | status: %s | pid: %d | log: %s%s\n",
+			t.ID, t.Name, t.Command, t.WorkDir, t.Status, t.PID, t.LogPath, marker)
 	}
 
 	systemPrompt := fmt.Sprintf(`You are a helpful assistant analyzing logs for background tasks.

@@ -5,13 +5,14 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/config"
+	"github.com/parth/watchy/internal/logcolor"
 	"github.com/parth/watchy/internal/store"
 	"github.com/parth/watchy/internal/task"
+	"github.com/parth/watchy/internal/termstyle"
 	"github.com/parth/watchy/internal/tick"
 )
 
@@ -20,6 +21,7 @@ type pane int
 const (
 	paneLeft pane = iota
 	paneRight
+	paneChat
 )
 
 type mode int
@@ -30,10 +32,16 @@ const (
 	modeSplit
 )
 
-type chatMessage struct {
-	role    string // "user", "agent", or "tool"
-	content string
-}
+type focusTarget int
+
+const (
+	focusTasks focusTarget = iota
+	focusLogs
+	focusChatView
+	focusChatInput
+)
+
+const maxChatMessages = 60
 
 type slashCommand struct {
 	name string
@@ -48,30 +56,43 @@ var slashCommands = []slashCommand{
 
 // Model is the root bubbletea model
 type Model struct {
-	mgr           *task.Manager
-	agent         *agent.Agent
-	conversation  *agent.Conversation
-	cfg           *config.Config
-	tickStore     *tick.Store
-	historyStore  *store.HistoryStore
+	mgr          *task.Manager
+	agent        *agent.Agent
+	conversation *agent.Conversation
+	cfg          *config.Config
+	tickStore    *tick.Store
+	historyStore *store.HistoryStore
 
-	tasks       []*task.Task
-	selectedIdx int
-	activePane  pane
-	rightMode   mode
-	leftHidden  bool
-	themeIdx    int
-	lightMode   bool
+	tasks         []*task.Task
+	selectedIdx   int
+	focusedArea   focusTarget
+	rightMode     mode
+	leftHidden    bool
+	themeIdx      int
+	lightMode     bool
+	tasksLoaded   bool
+	pendingTaskID int64
 
-	logViewport  viewport.Model
-	chatViewport viewport.Model
-	chatInput    textarea.Model
+	logViewport viewport.Model
+	chat        chatModel
+	logsLoading bool
 
-	chatHistory    []chatMessage
-	agentBusy      bool
-	agentCancel    context.CancelFunc
-	programRef     *programRef
-	slashPickerIdx int
+	agentBusy   bool
+	agentCancel context.CancelFunc
+	programRef  *programRef
+
+	modelPicker        bool
+	modelPickerLoading bool
+	modelPickerModels  []string
+	modelPickerIdx     int
+	modelPickerInput   textinput.Model
+	modelPickerErr     error
+	showHelp           bool
+	showTaskDetails    bool
+
+	statusMessage string
+	statusError   bool
+	statusSeq     int
 
 	// Terminal dimensions
 	width  int
@@ -94,13 +115,18 @@ type Model struct {
 	searchMode         bool
 	searchInput        textinput.Model
 	searchTerm         string
-	searchMatches      []int // indices into displayed lines (not original line numbers)
-	searchMatchLines   []int // original line numbers for each match
+	searchMatches      []int
+	searchMatchLines   []int
 	matchIndex         int
+	allLogContent      string
+	allRawLogContent   string
+	allLogLineNumbers  []int
 	originalLogContent string
-	rawLogContent      string // raw logs without colorization or line numbers
-	logLineNumbers     []int  // original line number for each line in logContent
-	copied             bool   // true briefly after copying to clipboard
+	rawLogContent      string
+	logLineNumbers     []int
+	copied             bool
+	showLogNoise       bool
+	hiddenLogNoise     int
 
 	// Cursor and visual selection (vim-style)
 	cursorLine  int  // current cursor line (0-indexed)
@@ -113,11 +139,6 @@ type Model struct {
 
 // New creates a new TUI model
 func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick.Store, historyStore *store.HistoryStore) Model {
-	ti := textarea.New()
-	ti.Placeholder = "Ask the agent..."
-	ti.SetHeight(3)
-	ti.ShowLineNumbers = false
-
 	si := textinput.New()
 	si.Placeholder = "Search..."
 	si.Prompt = "/"
@@ -126,7 +147,16 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick
 	ci := textinput.New()
 	ci.Prompt = ":"
 
+	mi := textinput.New()
+	mi.Prompt = "Filter: "
+	mi.Placeholder = "type a model name"
+
+	chat := newChatModel(maxChatMessages)
 	conv := ag.NewConversation()
+	for _, msg := range loadRecentHistory(historyStore, maxChatMessages) {
+		chat.AppendHistory(msg.Role, msg.Content)
+		conv.AppendHistory(msg.Role, msg.Content)
+	}
 
 	// Find theme index from config
 	themeIdx := 0
@@ -137,28 +167,32 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick
 		}
 	}
 
-	// Detect light mode from terminal
-	lightMode := detectLightMode()
+	// Resolve light mode from config and terminal state, then sync color renderers.
+	cfg.ColorMode = termstyle.NormalizeColorMode(cfg.ColorMode)
+	lightMode := termstyle.ResolveLightMode(cfg.ColorMode)
+	termstyle.ApplyLightMode(lightMode)
+	logcolor.SetLightMode(lightMode)
 
-	return Model{
-		mgr:           mgr,
-		agent:         ag,
-		conversation:  conv,
-		cfg:           cfg,
-		tickStore:     tickStore,
-		historyStore:  historyStore,
-		chatHistory:   loadRecentHistory(historyStore, 5),
-		activePane:    paneLeft,
-		rightMode:     modeLog,
-		themeIdx:      themeIdx,
-		lightMode:     lightMode,
-		logViewport:   viewport.New(0, 0),
-		chatViewport:  viewport.New(0, 0),
-		chatInput:     ti,
-		searchInput:   si,
-		commandInput:  ci,
-		programRef:    &programRef{},
+	model := Model{
+		mgr:              mgr,
+		agent:            ag,
+		conversation:     conv,
+		cfg:              cfg,
+		tickStore:        tickStore,
+		historyStore:     historyStore,
+		focusedArea:      focusTasks,
+		rightMode:        modeLog,
+		themeIdx:         themeIdx,
+		lightMode:        lightMode,
+		logViewport:      viewport.New(0, 0),
+		chat:             chat,
+		searchInput:      si,
+		commandInput:     ci,
+		modelPickerInput: mi,
+		programRef:       &programRef{},
 	}
+	model.syncChatPalette()
+	return model
 }
 
 type programRef struct {
@@ -170,35 +204,42 @@ func (m Model) SetProgram(p *tea.Program) {
 	m.programRef.p = p
 }
 
-// wrapLogContent is disabled - returns content as-is to ensure raw lines map 1:1 to visual lines.
-// This keeps cursor tracking simple and correct.
-func (m Model) wrapLogContent(content string) string {
-	return content
-}
-
-// loadRecentHistory loads the last n messages from history store
-func loadRecentHistory(hs *store.HistoryStore, n int) []chatMessage {
+// loadRecentHistory loads the last n messages from history store.
+func loadRecentHistory(hs *store.HistoryStore, n int) []store.ChatMessage {
 	if hs == nil {
 		return nil
 	}
-	recent := hs.Recent(n)
-	result := make([]chatMessage, len(recent))
-	for i, msg := range recent {
-		result[i] = chatMessage{role: msg.Role, content: msg.Content}
-	}
-	return result
+	return hs.Recent(n)
 }
 
 // appendChatMessage adds a message to chat history and persists it
 func (m *Model) appendChatMessage(role, content string) {
-	m.chatHistory = append(m.chatHistory, chatMessage{role: role, content: content})
-	// Keep only last 5 in memory
-	if len(m.chatHistory) > 5 {
-		m.chatHistory = m.chatHistory[len(m.chatHistory)-5:]
-	}
-	// Persist to store
+	m.chat.AppendMessage(role, content)
 	if m.historyStore != nil {
-		m.historyStore.Append(role, content)
+		if err := m.historyStore.Append(role, content); err != nil {
+			m.statusMessage = "could not save chat history: " + err.Error()
+			m.statusError = true
+		}
+	}
+}
+
+func (m *Model) appendToolStart(evt agent.ToolStartEvent) {
+	m.chat.AppendToolStart(evt)
+	if m.historyStore != nil {
+		if err := m.historyStore.Append("tool", "["+evt.Tool+"] "+evt.Args); err != nil {
+			m.statusMessage = "could not save tool history: " + err.Error()
+			m.statusError = true
+		}
+	}
+}
+
+func (m *Model) appendToolResult(evt agent.ToolResultEvent) {
+	m.chat.AppendToolResult(evt)
+	if m.historyStore != nil {
+		if err := m.historyStore.Append("tool", "-> "+limitText(evt.Result, 600)); err != nil {
+			m.statusMessage = "could not save tool history: " + err.Error()
+			m.statusError = true
+		}
 	}
 }
 
@@ -206,5 +247,6 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		fetchTasks(m.mgr),
 		tickEvery(2*time.Second),
+		m.chat.Init(),
 	)
 }

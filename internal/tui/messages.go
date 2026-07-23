@@ -7,20 +7,35 @@ import (
 	"github.com/parth/watchy/internal/task"
 )
 
-type tasksUpdatedMsg []*task.Task
+type tasksUpdatedMsg struct {
+	tasks []*task.Task
+	err   error
+}
 type logContentMsg struct {
-	raw         string // raw log content without colorization
-	colored     string // colorized log content
-	startLine   int    // starting line number (1-indexed) in the source file
+	taskID      int
+	visibleRaw  string // raw content for visible display lines only
+	colored     string // colorized display content
 	lineNumbers []int  // original line number for each line in content
+	hiddenNoise int    // number of routine noise lines hidden from display
+	err         error
 }
 type clipboardCopiedMsg struct{}
 type clearCopiedMsg struct{}
+type clearStatusMsg int
 type agentResponseMsg string
 type agentErrorMsg struct{ err error }
 type agentToolStartMsg agent.ToolStartEvent
 type agentToolResultMsg agent.ToolResultEvent
-type taskStoppedMsg int
-type taskRestartedMsg int64
-type selectTaskMsg int
+type taskStoppedMsg struct {
+	id  int
+	err error
+}
+type taskRestartedMsg struct {
+	id  int64
+	err error
+}
+type modelsLoadedMsg struct {
+	models []string
+	err    error
+}
 type tickMsg time.Time

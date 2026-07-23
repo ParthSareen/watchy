@@ -222,8 +222,9 @@ func (a *Agent) startTask(command string, nameVal interface{}) (string, error) {
 		name = s
 	} else {
 		name = command
-		if len(name) > 40 {
-			name = name[:40] + "..."
+		runes := []rune(name)
+		if len(runes) > 40 {
+			name = string(runes[:40]) + "..."
 		}
 	}
 
@@ -252,6 +253,7 @@ func (a *Agent) getTaskInfo(taskID int) (string, error) {
 		"id":         task.ID,
 		"name":       task.Name,
 		"command":    task.Command,
+		"work_dir":   task.WorkDir,
 		"pid":        task.PID,
 		"status":     task.Status,
 		"start_time": task.StartTime.Format("2006-01-02 15:04:05"),

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/parth/watchy/internal/atomicfile"
 )
 
 // ChatMessage represents a single chat message for persistence
@@ -57,6 +59,7 @@ func (s *HistoryStore) load() error {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var msg ChatMessage
 		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
@@ -81,13 +84,6 @@ func (s *HistoryStore) Append(role, content string) error {
 		Timestamp: time.Now(),
 	}
 
-	// Add to memory
-	s.messages = append(s.messages, msg)
-	if len(s.messages) > s.maxMessages {
-		s.messages = s.messages[len(s.messages)-s.maxMessages:]
-	}
-
-	// Append to file
 	file, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open history file: %w", err)
@@ -105,12 +101,22 @@ func (s *HistoryStore) Append(role, content string) error {
 	if _, err := file.WriteString("\n"); err != nil {
 		return err
 	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
 
+	s.messages = append(s.messages, msg)
+	if len(s.messages) > s.maxMessages {
+		s.messages = s.messages[len(s.messages)-s.maxMessages:]
+	}
 	return nil
 }
 
 // Recent returns the last n messages from history
 func (s *HistoryStore) Recent(n int) []ChatMessage {
+	if n <= 0 {
+		return nil
+	}
 	if n >= len(s.messages) {
 		result := make([]ChatMessage, len(s.messages))
 		copy(result, s.messages)
@@ -121,14 +127,11 @@ func (s *HistoryStore) Recent(n int) []ChatMessage {
 	return result
 }
 
-// All returns all messages in memory
-func (s *HistoryStore) All() []ChatMessage {
-	result := make([]ChatMessage, len(s.messages))
-	copy(result, s.messages)
-	return result
-}
-
-// Close is a no-op for JSONL (data is already persisted)
-func (s *HistoryStore) Close() error {
+// Clear removes all persisted and in-memory history.
+func (s *HistoryStore) Clear() error {
+	if err := atomicfile.Write(s.path, nil, 0644); err != nil {
+		return fmt.Errorf("failed to clear history file: %w", err)
+	}
+	s.messages = s.messages[:0]
 	return nil
 }

@@ -13,6 +13,8 @@ type Server struct {
 	cmd     *exec.Cmd
 	port    int
 	running bool
+	owned   bool
+	done    chan error
 }
 
 // NewServer creates a new Ollama server manager for the given port
@@ -27,6 +29,11 @@ func (s *Server) Start() error {
 	if s.running {
 		return nil
 	}
+	if s.ready() {
+		s.running = true
+		s.owned = false
+		return nil
+	}
 
 	s.cmd = exec.Command("ollama", "serve")
 	s.cmd.Env = append(s.cmd.Environ(), fmt.Sprintf("OLLAMA_HOST=:%d", s.port))
@@ -37,12 +44,24 @@ func (s *Server) Start() error {
 	}
 
 	s.running = true
+	s.owned = true
+	s.done = make(chan error, 1)
+	go func() {
+		s.done <- s.cmd.Wait()
+	}()
 	return nil
 }
 
 // Stop terminates the ollama serve process
 func (s *Server) Stop() error {
-	if !s.running || s.cmd == nil || s.cmd.Process == nil {
+	if !s.running {
+		return nil
+	}
+	if !s.owned {
+		s.running = false
+		return nil
+	}
+	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
 
@@ -54,14 +73,8 @@ func (s *Server) Stop() error {
 		s.cmd.Process.Signal(syscall.SIGTERM)
 	}
 
-	// Wait for the process to exit
-	done := make(chan error, 1)
-	go func() {
-		done <- s.cmd.Wait()
-	}()
-
 	select {
-	case <-done:
+	case <-s.done:
 	case <-time.After(5 * time.Second):
 		// Force kill if it doesn't exit gracefully
 		if pgid, err := syscall.Getpgid(s.cmd.Process.Pid); err == nil {
@@ -69,7 +82,7 @@ func (s *Server) Stop() error {
 		} else {
 			s.cmd.Process.Kill()
 		}
-		<-done
+		<-s.done
 	}
 
 	s.running = false
@@ -78,16 +91,20 @@ func (s *Server) Stop() error {
 
 // WaitReady polls the health endpoint until the server is ready
 func (s *Server) WaitReady() error {
-	client := &http.Client{Timeout: 1 * time.Second}
-	url := fmt.Sprintf("http://localhost:%d/api/tags", s.port)
-
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(url)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
+		if s.ready() {
+			return nil
+		}
+		if s.owned {
+			select {
+			case err := <-s.done:
+				s.running = false
+				if err == nil {
+					return fmt.Errorf("ollama server exited before becoming ready")
+				}
+				return fmt.Errorf("ollama server exited before becoming ready: %w", err)
+			default:
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -99,4 +116,14 @@ func (s *Server) WaitReady() error {
 // Host returns the base URL for the Ollama server
 func (s *Server) Host() string {
 	return fmt.Sprintf("http://localhost:%d", s.port)
+}
+
+func (s *Server) ready() bool {
+	client := &http.Client{Timeout: time.Second}
+	response, err := client.Get(fmt.Sprintf("%s/api/tags", s.Host()))
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	return response.StatusCode == http.StatusOK
 }

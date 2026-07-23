@@ -6,6 +6,8 @@ import (
 	"os"
 	"sort"
 	"time"
+
+	"github.com/parth/watchy/internal/atomicfile"
 )
 
 // Tick represents a saved command shortcut
@@ -55,12 +57,12 @@ func (s *Store) load() error {
 	return json.Unmarshal(data, &s.ticks)
 }
 
-func (s *Store) save() error {
-	data, err := json.MarshalIndent(s.ticks, "", "  ")
+func (s *Store) save(ticks map[string]Tick) error {
+	data, err := json.MarshalIndent(ticks, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0644)
+	return atomicfile.Write(s.path, data, 0644)
 }
 
 // Save saves a new tick. Returns error if name is reserved or already exists.
@@ -74,12 +76,17 @@ func (s *Store) Save(name, command, description string) error {
 	if _, exists := s.ticks[name]; exists {
 		return fmt.Errorf("tick %q already exists (use rm first to replace)", name)
 	}
-	s.ticks[name] = Tick{
+	next := cloneTicks(s.ticks)
+	next[name] = Tick{
 		Command:     command,
 		Description: description,
 		CreatedAt:   time.Now(),
 	}
-	return s.save()
+	if err := s.save(next); err != nil {
+		return err
+	}
+	s.ticks = next
+	return nil
 }
 
 // Get returns a tick by name, or an error if not found.
@@ -96,8 +103,13 @@ func (s *Store) Remove(name string) error {
 	if _, ok := s.ticks[name]; !ok {
 		return fmt.Errorf("tick %q not found", name)
 	}
-	delete(s.ticks, name)
-	return s.save()
+	next := cloneTicks(s.ticks)
+	delete(next, name)
+	if err := s.save(next); err != nil {
+		return err
+	}
+	s.ticks = next
+	return nil
 }
 
 // List returns all ticks sorted by name.
@@ -128,4 +140,12 @@ func isValidName(name string) bool {
 		}
 	}
 	return true
+}
+
+func cloneTicks(source map[string]Tick) map[string]Tick {
+	cloned := make(map[string]Tick, len(source))
+	for name, tick := range source {
+		cloned[name] = tick
+	}
+	return cloned
 }

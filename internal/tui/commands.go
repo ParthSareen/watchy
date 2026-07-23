@@ -2,50 +2,67 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/atotto/clipboard"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/logcolor"
 	"github.com/parth/watchy/internal/task"
 )
 
+const maxTUILogLines = 5000
+
 func fetchTasks(mgr *task.Manager) tea.Cmd {
 	return func() tea.Msg {
 		tasks, err := mgr.ListTasks()
 		if err != nil {
-			return tasksUpdatedMsg(nil)
+			return tasksUpdatedMsg{err: err}
 		}
-		return tasksUpdatedMsg(tasks)
+		return tasksUpdatedMsg{tasks: tasks}
 	}
 }
 
-func fetchLogs(mgr *task.Manager, taskID int) tea.Cmd {
+func fetchLogs(mgr *task.Manager, taskID int, showNoise bool) tea.Cmd {
 	return func() tea.Msg {
-		result, err := mgr.TailLogs(taskID, 0)
+		result, err := mgr.FollowLogs(taskID, maxTUILogLines)
 		if err != nil {
-			return logContentMsg{}
+			return logContentMsg{taskID: taskID, err: err}
 		}
-		var raw, colored strings.Builder
-		lineNumbers := make([]int, len(result.Lines))
-		for i, line := range result.Lines {
-			if i > 0 {
-				raw.WriteString("\n")
-				colored.WriteString("\n")
+		var visibleRaw, colored strings.Builder
+		lineNumbers := make([]int, 0, len(result.Lines))
+		hiddenNoise := 0
+		for _, line := range result.Lines {
+			rendered, hidden := logcolor.RenderLine(line.Content, logcolor.RenderOptions{ShowNoise: showNoise})
+			if hidden {
+				hiddenNoise++
+				continue
 			}
-			raw.WriteString(line.Content)
-			colored.WriteString(logcolor.Colorize(line.Content))
-			lineNumbers[i] = line.LineNum
+			if colored.Len() > 0 {
+				colored.WriteString("\n")
+				visibleRaw.WriteString("\n")
+			}
+			colored.WriteString(rendered)
+			visibleRaw.WriteString(line.Content)
+			lineNumbers = append(lineNumbers, line.LineNum)
 		}
 		return logContentMsg{
-			raw:         raw.String(),
+			taskID:      taskID,
+			visibleRaw:  visibleRaw.String(),
 			colored:     colored.String(),
-			startLine:   result.StartLine,
 			lineNumbers: lineNumbers,
+			hiddenNoise: hiddenNoise,
 		}
+	}
+}
+
+func listModels(a *agent.Agent) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		models, err := a.ListModels(ctx)
+		return modelsLoadedMsg{models: models, err: err}
 	}
 }
 
@@ -63,7 +80,7 @@ func sendToAgent(conv *agent.Conversation, msg string, ctx context.Context, p *t
 		)
 		if err != nil {
 			if ctx.Err() != nil {
-				return agentErrorMsg{err: fmt.Errorf("cancelled")}
+				return agentErrorMsg{err: ctx.Err()}
 			}
 			return agentErrorMsg{err: err}
 		}
@@ -73,18 +90,14 @@ func sendToAgent(conv *agent.Conversation, msg string, ctx context.Context, p *t
 
 func stopTask(mgr *task.Manager, id int) tea.Cmd {
 	return func() tea.Msg {
-		mgr.StopTask(id)
-		return taskStoppedMsg(id)
+		return taskStoppedMsg{id: id, err: mgr.StopTask(id)}
 	}
 }
 
 func restartTaskCmd(mgr *task.Manager, id int) tea.Cmd {
 	return func() tea.Msg {
 		newTaskID, err := mgr.RestartTask(id)
-		if err != nil {
-			return taskRestartedMsg(0)
-		}
-		return taskRestartedMsg(newTaskID)
+		return taskRestartedMsg{id: newTaskID, err: err}
 	}
 }
 

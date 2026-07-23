@@ -2,20 +2,19 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
 type theme struct {
-	name      string
-	bright    lipgloss.Color
-	dim       lipgloss.Color
-	bg        lipgloss.Color
-	brightLg  lipgloss.Color
-	dimLg     lipgloss.Color
-	bgLg      lipgloss.Color
+	name     string
+	bright   lipgloss.Color
+	dim      lipgloss.Color
+	bg       lipgloss.Color
+	brightLg lipgloss.Color
+	dimLg    lipgloss.Color
+	bgLg     lipgloss.Color
 }
 
 var themes = []theme{
@@ -33,29 +32,11 @@ var (
 	errorColor  = lipgloss.Color("124")
 	errorColorL = lipgloss.Color("196")
 	dimGray     = lipgloss.Color("240")
-	dimGrayL    = lipgloss.Color("250")
+	dimGrayL    = lipgloss.Color("242")
 )
 
 func (m Model) theme() theme {
 	return themes[m.themeIdx%len(themes)]
-}
-
-func detectLightMode() bool {
-	colorfgbg := os.Getenv("COLORFGBG")
-	if colorfgbg == "" {
-		return false
-	}
-	// Format: COLORFGBG=bg;fg (e.g., "0;15" for dark, "7;15" for light)
-	// Background values: 0-6 = dark, 7-15 = light
-	for _, part := range strings.Split(colorfgbg, ";") {
-		var val int
-		if _, err := fmt.Sscanf(part, "%d", &val); err == nil {
-			if val >= 7 && val <= 15 {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // bright returns the bright (foreground) color based on light/dark mode
@@ -101,9 +82,27 @@ func (m Model) errorColorForMode() lipgloss.Color {
 	return errorColor
 }
 
+func (m *Model) syncChatPalette() {
+	m.chat.SetPalette(chatPalette{
+		bright: m.bright(),
+		dim:    m.dim(),
+		muted:  m.dimGrayForMode(),
+		err:    m.errorColorForMode(),
+	})
+}
+
 func (m Model) View() string {
 	if m.width == 0 {
 		return "Loading..."
+	}
+	if m.modelPicker {
+		return m.renderModelPicker()
+	}
+	if m.showHelp {
+		return m.renderHelp()
+	}
+	if m.showTaskDetails {
+		return m.renderTaskDetails()
 	}
 
 	var leftPane string
@@ -115,9 +114,9 @@ func (m Model) View() string {
 	// Right pane: logs, chat, or split
 	var rightPane string
 	if m.rightMode == modeLog {
-		rightTitle := "Logs"
+		rightTitle := m.viewTabs()
 		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
-			rightTitle = fmt.Sprintf("Logs [%d: %s]", m.tasks[m.selectedIdx].ID, m.tasks[m.selectedIdx].Name)
+			rightTitle += fmt.Sprintf(" • %d %s • %s", m.tasks[m.selectedIdx].ID, m.tasks[m.selectedIdx].Name, m.tasks[m.selectedIdx].Status)
 		}
 		// Show line number range when available
 		if len(m.logLineNumbers) > 0 && m.searchTerm == "" {
@@ -137,7 +136,8 @@ func (m Model) View() string {
 			}
 			rightTitle += fmt.Sprintf(" [%q %d/%d%s]", m.searchTerm, m.matchIndex+1, len(m.searchMatches), matchLine)
 		}
-		rightContent := m.logViewport.View()
+		rightTitle += m.logNoiseLabel()
+		rightContent := m.logContentView()
 		if m.searchMode {
 			rightContent += "\n" + m.searchInput.View()
 		}
@@ -146,18 +146,17 @@ func (m Model) View() string {
 		}
 		rightPane = m.applyBorder(paneRight, m.rightWidth, m.boxHeight, rightTitle, rightContent)
 	} else if m.rightMode == modeChat {
-		rightTitle := "Chat"
-		picker := m.renderSlashPicker()
-		rightContent := m.chatViewport.View() + "\n" + picker + m.chatInput.View()
-		rightPane = m.applyBorder(paneRight, m.rightWidth, m.boxHeight, rightTitle, rightContent)
+		rightTitle := m.viewTabs()
+		rightContent := m.chat.View(m.focusedArea == focusChatInput)
+		rightPane = m.applyBorder(paneChat, m.rightWidth, m.boxHeight, rightTitle, rightContent)
 	} else {
 		// Split mode: chat and logs side by side
 		splitWidth := m.rightWidth/2 - 1
 
 		// Logs pane (left half of right section)
-		logsTitle := "Logs"
+		logsTitle := m.viewTabs()
 		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
-			logsTitle = fmt.Sprintf("Logs [%d: %s]", m.tasks[m.selectedIdx].ID, m.tasks[m.selectedIdx].Name)
+			logsTitle += fmt.Sprintf(" • %d %s", m.tasks[m.selectedIdx].ID, m.tasks[m.selectedIdx].Name)
 		}
 		// Show line number range when available
 		if len(m.logLineNumbers) > 0 && m.searchTerm == "" {
@@ -177,7 +176,8 @@ func (m Model) View() string {
 			}
 			logsTitle += fmt.Sprintf(" [%q %d/%d%s]", m.searchTerm, m.matchIndex+1, len(m.searchMatches), matchLine)
 		}
-		logsContent := m.logViewport.View()
+		logsTitle += m.logNoiseLabel()
+		logsContent := m.logContentView()
 		if m.searchMode {
 			logsContent += "\n" + m.searchInput.View()
 		}
@@ -185,9 +185,8 @@ func (m Model) View() string {
 
 		// Chat pane (right half of right section)
 		chatTitle := "Chat"
-		picker := m.renderSlashPicker()
-		chatContent := m.chatViewport.View() + "\n" + picker + m.chatInput.View()
-		chatPane := m.applyBorder(paneRight, splitWidth, m.boxHeight, chatTitle, chatContent)
+		chatContent := m.chat.View(m.focusedArea == focusChatInput)
+		chatPane := m.applyBorder(paneChat, splitWidth, m.boxHeight, chatTitle, chatContent)
 
 		rightPane = lipgloss.JoinHorizontal(lipgloss.Top, logsPane, chatPane)
 	}
@@ -208,7 +207,7 @@ func (m Model) View() string {
 func (m Model) applyBorder(p pane, width, height int, title, content string) string {
 	borderColor := m.dimGrayForMode()
 	bright := m.bright()
-	if m.activePane == p {
+	if m.paneIsActive(p) {
 		borderColor = bright
 	}
 	style := lipgloss.NewStyle().
@@ -241,23 +240,21 @@ func (m Model) renderTaskList(width, height int) string {
 		var indicator string
 		switch task.Status {
 		case "running":
-			indicator = lipgloss.NewStyle().Foreground(bright).Render("[R]")
+			indicator = lipgloss.NewStyle().Foreground(bright).Render("running")
 		case "crashed":
-			indicator = lipgloss.NewStyle().Foreground(errColor).Render("[X]")
+			indicator = lipgloss.NewStyle().Foreground(errColor).Render("crashed")
 		default:
-			indicator = dimStyle.Render("[-]")
+			indicator = dimStyle.Render(task.Status)
 		}
 
 		name := task.Name
-		maxName := width - 10
+		maxName := width - 15
 		if maxName < 10 {
 			maxName = 10
 		}
-		if len(name) > maxName {
-			name = name[:maxName-3] + "..."
-		}
+		name = truncateRunes(name, maxName)
 
-		line := fmt.Sprintf(" %s %-3d %s", indicator, task.ID, name)
+		line := fmt.Sprintf(" %-7s %-3d %s", indicator, task.ID, name)
 
 		if i == m.selectedIdx {
 			selectedStyle := lipgloss.NewStyle().Background(bgColor).Bold(true).Foreground(bright)
@@ -270,82 +267,111 @@ func (m Model) renderTaskList(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderSlashPicker() string {
-	if !m.showSlashPicker() {
-		return ""
-	}
-
-	filtered := m.filteredSlashCommands()
-	if len(filtered) == 0 {
-		return ""
-	}
-
-	bright := m.bright()
-	dimColor := m.dim()
-	dimGrayColor := m.dimGrayForMode()
-
-	dimStyle := lipgloss.NewStyle().Foreground(dimGrayColor)
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(bright)
-
-	var lines []string
-	idx := m.slashPickerIdx % len(filtered)
-	for i, cmd := range filtered {
-		line := fmt.Sprintf("  %-10s %s", cmd.name, cmd.desc)
-		if i == idx {
-			line = selectedStyle.Render(line)
-		} else {
-			line = dimStyle.Render(line)
-		}
-		lines = append(lines, line)
-	}
-
-	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(dimColor).
-		Padding(0, 1)
-
-	return border.Render(strings.Join(lines, "\n")) + "\n"
-}
-
 func (m Model) renderStatusBar() string {
 	bright := m.bright()
 	dimGrayColor := m.dimGrayForMode()
-
-	dimStyle := lipgloss.NewStyle().Foreground(dimGrayColor)
-
-	var parts []string
-
+	left := m.contextualHelp()
+	leftStyle := lipgloss.NewStyle().Foreground(dimGrayColor)
+	if m.statusMessage != "" {
+		left = m.statusMessage
+		leftStyle = lipgloss.NewStyle().Foreground(bright)
+		if m.statusError {
+			leftStyle = lipgloss.NewStyle().Foreground(m.errorColorForMode())
+		}
+	}
 	if m.pendingCount > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render(fmt.Sprintf("[%d]", m.pendingCount)))
+		left = fmt.Sprintf("[%d] %s", m.pendingCount, left)
 	}
-
 	if m.copied {
-		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[copied!]"))
+		left = "copied • " + left
 	}
-
 	if m.visualMode {
-		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[visual]"))
+		left = "visual • " + left
 	}
-
 	if m.commandMode {
-		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[command]"))
+		left = "command • " + left
 	}
-
-	if m.commandMode {
-		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[command]"))
-	}
-
 	if m.agentBusy {
-		parts = append(parts, lipgloss.NewStyle().Foreground(bright).Render("[agent working... esc:cancel]"))
+		left = "agent working, esc cancels • " + left
 	}
 
-	modeIndicator := "dark"
-	if m.lightMode {
-		modeIndicator = "light"
+	right := m.modelStatus()
+	available := m.width - lipgloss.Width(right) - 3
+	if available < 8 {
+		return leftStyle.Render(truncateRunes(left, m.width))
 	}
-	keys := fmt.Sprintf("j/k:nav  g/G:top/bottom  v:visual  y:copy  /:search  n/N:match  ::goto  tab:cycle  t:theme(%s)  m:mode(%s)  x:stop  r:restart  q:quit", m.theme().name, modeIndicator)
-	parts = append(parts, dimStyle.Render(keys))
-
-	return strings.Join(parts, "  ")
+	left = truncateRunes(left, available)
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return leftStyle.Render(left) + strings.Repeat(" ", gap) + lipgloss.NewStyle().Foreground(bright).Render(right)
 }
 
+func (m Model) contextualHelp() string {
+	switch m.focusedArea {
+	case focusTasks:
+		return "j/k move • enter logs • d details • x stop • r restart • tab focus • ? help"
+	case focusLogs:
+		return "j/k move • / search • v select • y copy • l/c/s view • tab focus • ? help"
+	case focusChatView:
+		return "j/k scroll • i compose • e expand • l/c/s view • tab focus • ? help"
+	case focusChatInput:
+		return "enter send • ctrl+j newline • esc blur/cancel • ? help"
+	default:
+		return "? help • q quit"
+	}
+}
+
+func (m Model) logContentView() string {
+	if m.logsLoading && m.originalLogContent == "" {
+		return m.dimText("Loading logs…")
+	}
+	if len(m.tasks) == 0 {
+		return m.dimText("No tasks yet. Use chat or `watchy start` to create one.")
+	}
+	if m.originalLogContent == "" {
+		return m.dimText("No output yet.")
+	}
+	return m.logViewport.View()
+}
+
+func truncateRunes(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+	return string(runes[:width-1]) + "…"
+}
+
+func (m Model) logNoiseLabel() string {
+	if m.showLogNoise {
+		return " [noise shown]"
+	}
+	if m.hiddenLogNoise > 0 {
+		return fmt.Sprintf(" [%d noise hidden]", m.hiddenLogNoise)
+	}
+	return ""
+}
+
+func (m Model) colorModeLabel() string {
+	mode := "auto"
+	if m.cfg != nil && m.cfg.ColorMode != "" {
+		mode = m.cfg.ColorMode
+	}
+
+	resolved := "dark"
+	if m.lightMode {
+		resolved = "light"
+	}
+	if mode == "auto" {
+		return "auto:" + resolved
+	}
+	return resolved
+}

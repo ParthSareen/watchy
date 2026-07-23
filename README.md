@@ -42,13 +42,22 @@ The `--model` flag works with any command.
 
 ### Navigation
 ```
-j/k or ↑/↓   navigate task list / scroll logs / move cursor
-g            go to top of logs
-G            go to bottom of logs
-tab          cycle: sidebar → logs → chat → sidebar
+j/k or ↑/↓   navigate task list / scroll focused pane
+g            go to top of logs/chat
+G            go to bottom of logs/chat
+tab          move focus through the panes currently on screen
+shift+tab    move focus backward
+l            show logs
+c            show chat
+s            toggle split view
+[/]          cycle logs, chat, and split views
 h            hide/show sidebar
-enter        open logs for selected task / maximize logs pane
+enter        open selected task logs / focus chat / send chat
+?            show all keybindings
 ```
+
+Mouse is supported in the TUI: click panes to focus them, click tasks to open
+logs, click the chat composer to type, and use the wheel over tasks/logs/chat.
 
 ### Logs
 ```
@@ -56,21 +65,25 @@ l            show logs for selected task
 /            search in logs
 n            next search match
 N            previous search match
+u            show/hide routine Ollama serve noise
 v            toggle visual mode (select lines with cursor)
 y            copy to clipboard (selection in visual mode, or all logs)
-s            split view (logs + chat side-by-side)
 ```
 
 ### Tasks
 ```
 x            stop selected task
 r            restart stopped/crashed task
+d            show full task details, command, and working directory
 ```
 
 ### Chat
 ```
-c            open chat (focuses input immediately)
+i            focus chat composer from chat history
+e            expand/collapse the latest tool card
+y            copy latest tool args/result
 ctrl+left    switch from chat to logs
+ctrl+j       insert newline in chat input
 esc          cancel in-flight agent request
 ```
 
@@ -78,6 +91,7 @@ esc          cancel in-flight agent request
 ```
 t            cycle theme (green/blue/purple/orange/pink/cyan/red/white)
 m            toggle light/dark mode
+M            choose an available Ollama model
 ```
 
 ### General
@@ -89,7 +103,7 @@ ctrl+c       quit (works even in chat input)
 ## Chat commands
 
 ```
-/model              show current model
+/model              open the model picker
 /model llama3.1:8b  switch model mid-session
 /save <name>        save last agent-started task as a tick
 /save <name> <cmd>  save a command as a named tick
@@ -113,13 +127,20 @@ Ask it things like "start a web server on port 8080", "are there any errors in t
 Optional config at `~/.watchy/config.yaml`:
 
 ```yaml
-retention_days: 1
+retention_days: 7
 model: "glm-4.7:cloud"
 theme: "green"
+color_mode: "auto"
 ```
 
-Available themes: `green`, `blue`, `purple`, `orange`, `pink`, `cyan`, `red`, `white`. Use `t` in the TUI to cycle through them, or `m` to toggle light/dark mode for your terminal background.
+Available themes: `green`, `blue`, `purple`, `orange`, `pink`, `cyan`, `red`, `white`. Use `t` in the TUI to cycle through them. `color_mode` can be `auto`, `dark`, or `light`; use `m` in the TUI to toggle and persist a manual light/dark mode.
 
-You can also set the model per-session with `--model` or `/model` in chat. Config file values are used as defaults.
+You can also set the model per-session with `--model`, `M`, or `/model` in chat.
+The picker lists models from Ollama and accepts a manually typed model name. Press
+Enter to use a model for the current session or Ctrl+S to save it as the default.
+
+Tasks remember the directory they were launched from, so restarting a task uses
+the same working directory. Cleanup is explicit: `watchy cleanup` removes finished
+tasks older than `retention_days`; simply opening the TUI does not delete history.
 
 Data lives in `~/.watchy/` (SQLite db + log files).

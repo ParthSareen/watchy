@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"github.com/parth/watchy/internal/tui"
 )
 
-// version is set via ldflags at build time: -ldflags "-X main.version=v0.2.0"
 var version = "dev"
 
 const (
@@ -24,410 +24,431 @@ const (
 	ollamaCloudURL = "https://ollama.com"
 )
 
+type options struct {
+	command   string
+	args      []string
+	model     string
+	modelSet  bool
+	online    bool
+	help      bool
+	showBuild bool
+}
+
 func main() {
-	// Check --version early before any setup
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-v" {
-			fmt.Println(version)
-			return
-		}
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string, stdout, stderr io.Writer) error {
+	opts, err := parseOptions(args)
+	if err != nil {
+		return err
+	}
+	if opts.showBuild {
+		fmt.Fprintln(stdout, version)
+		return nil
+	}
+	if opts.help {
+		printUsage(stdout)
+		return nil
 	}
 
 	cfg, err := config.New()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+		return err
+	}
+	if opts.modelSet {
+		cfg.Model = opts.model
+	}
+
+	if opts.command == "tick" {
+		tickStore, err := tick.NewStore(cfg.TicksPath)
+		if err != nil {
+			return fmt.Errorf("load ticks: %w", err)
+		}
+		return cmdTick(tickStore, opts.args, stdout)
+	}
+
+	var tickStore *tick.Store
+	if opts.command == "" || !isBuiltInCommand(opts.command) {
+		tickStore, err = tick.NewStore(cfg.TicksPath)
+		if err != nil {
+			return fmt.Errorf("load ticks: %w", err)
+		}
+	}
+	if opts.command != "" && !isBuiltInCommand(opts.command) {
+		if !tickStore.Has(opts.command) {
+			return fmt.Errorf("unknown command %q; run watchy --help for usage", opts.command)
+		}
 	}
 
 	storage, err := task.NewStorage(cfg.DBPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer storage.Close()
-
-	mgr := task.NewManager(storage, cfg.LogsDir)
-
-	// Sync task statuses on startup
-	mgr.SyncTaskStatus()
-
-	// Parse global flags
-	args := os.Args[1:]
-	onlineMode := false
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--online" {
-			onlineMode = true
-			args = append(args[:i], args[i+1:]...)
-			i--
-		} else if args[i] == "--model" && i+1 < len(args) {
-			cfg.Model = args[i+1]
-			args = append(args[:i], args[i+2:]...)
-			i--
-		}
+	manager := task.NewManager(storage, cfg.LogsDir)
+	if err := manager.SyncTaskStatus(); err != nil {
+		return fmt.Errorf("sync task status: %w", err)
 	}
 
-	// Determine Ollama host
-	var srv *ollama.Server
-	ollamaHost := ""
-	if onlineMode {
-		ollamaHost = ollamaCloudURL
-	} else {
-		// Start managed Ollama server
-		srv = ollama.NewServer(ollamaPort)
-		if err := srv.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not start managed Ollama: %s\n", err)
-			// ollamaHost stays empty, agent will fall back to environment
-		} else {
-			defer srv.Stop()
-			if err := srv.WaitReady(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: managed Ollama not ready: %s\n", err)
-				srv.Stop()
-			} else {
-				ollamaHost = srv.Host()
-			}
-		}
-	}
-
-	tickStore, err := tick.NewStore(cfg.TicksPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading ticks: %s\n", err)
-		os.Exit(1)
-	}
-
-	historyStore, err := store.NewHistoryStore(cfg.HistoryPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading history: %s\n", err)
-		os.Exit(1)
-	}
-
-	cmd := ""
-	if len(args) >= 1 {
-		cmd = args[0]
-	}
-
-	var subArgs []string
-	if len(args) > 1 {
-		subArgs = args[1:]
-	}
-	switch cmd {
+	switch opts.command {
 	case "start":
-		cmdStart(mgr, subArgs)
+		return cmdStart(manager, opts.args, stdout)
 	case "stop":
-		cmdStop(mgr, subArgs)
+		return cmdStop(manager, opts.args, stdout)
 	case "list":
-		cmdList(mgr)
+		return cmdList(manager, stdout)
 	case "logs":
-		cmdLogs(mgr, subArgs)
-	case "ask":
-		cmdAsk(mgr, cfg, ollamaHost, subArgs)
+		return cmdLogs(manager, opts.args, stdout)
 	case "cleanup":
-		cmdCleanup(mgr, cfg)
-	case "tick":
-		cmdTick(tickStore, subArgs)
-	case "":
-		cmdTUI(mgr, cfg, ollamaHost, tickStore, historyStore)
-	default:
-		if tickStore.Has(cmd) {
-			cmdRunTick(mgr, tickStore, cmd)
-		} else {
-			fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-			printUsage()
-			os.Exit(1)
+		return cmdCleanup(manager, cfg, stdout)
+	case "ask":
+		host, stop, err := ollamaHost(opts.online, stderr)
+		if err != nil {
+			return err
 		}
+		defer stop()
+		return cmdAsk(manager, cfg, host, opts.args, stdout)
+	case "":
+		host, stop, err := ollamaHost(opts.online, stderr)
+		if err != nil {
+			return err
+		}
+		defer stop()
+		historyStore, err := store.NewHistoryStore(cfg.HistoryPath)
+		if err != nil {
+			return fmt.Errorf("load history: %w", err)
+		}
+		return cmdTUI(manager, cfg, host, tickStore, historyStore)
+	default:
+		return cmdRunTick(manager, tickStore, opts.command, stdout)
 	}
 }
 
-func printUsage() {
-	fmt.Println(`Usage: watchy [--online] [--model <model>] [command] [args]
+func parseOptions(args []string) (options, error) {
+	var opts options
+	remaining := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--online":
+			opts.online = true
+		case arg == "--help" || arg == "-h":
+			opts.help = true
+		case arg == "--version" || arg == "-v":
+			opts.showBuild = true
+		case arg == "--model":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return options{}, fmt.Errorf("--model requires a model name")
+			}
+			i++
+			opts.model = args[i]
+			opts.modelSet = true
+		case strings.HasPrefix(arg, "--model="):
+			opts.model = strings.TrimPrefix(arg, "--model=")
+			if opts.model == "" {
+				return options{}, fmt.Errorf("--model requires a model name")
+			}
+			opts.modelSet = true
+		default:
+			remaining = append(remaining, arg)
+		}
+	}
+	if len(remaining) > 0 {
+		opts.command = remaining[0]
+		opts.args = remaining[1:]
+	}
+	return opts, nil
+}
+
+func isBuiltInCommand(command string) bool {
+	switch command {
+	case "start", "stop", "list", "logs", "ask", "cleanup":
+		return true
+	default:
+		return false
+	}
+}
+
+func ollamaHost(online bool, stderr io.Writer) (string, func(), error) {
+	if online {
+		return ollamaCloudURL, func() {}, nil
+	}
+	server := ollama.NewServer(ollamaPort)
+	if err := server.Start(); err != nil {
+		fmt.Fprintf(stderr, "Warning: could not start managed Ollama: %s\n", err)
+		return "", func() {}, nil
+	}
+	if err := server.WaitReady(); err != nil {
+		server.Stop()
+		return "", func() {}, fmt.Errorf("start Ollama: %w", err)
+	}
+	return server.Host(), func() {
+		if err := server.Stop(); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not stop managed Ollama: %s\n", err)
+		}
+	}, nil
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprint(w, `Usage: watchy [--online] [--model <model>] [command] [args]
 
 Running watchy with no command launches the interactive TUI.
 
 Global flags:
-  --online              Use ollama.com cloud API instead of local server
-  --model <model>       Specify which model to use
+  --online              Use ollama.com instead of local Ollama
+  --model <model>       Override the model for this session
   --version, -v         Print version and exit
+  --help, -h            Show this help
 
 Commands:
   start <command> [--name <name>]   Start a background task
-  stop <task-id>                    Stop a running task
+  stop [task-id]                    Stop a task (default: latest)
   list                              List all tasks
-  logs <task-id> [-n <lines>]       View task logs
-  ask <task-id> "<question>"        Ask the AI agent about a task
-  cleanup                           Clean up old completed tasks
+  logs [task-id] [-n <lines>]       View task logs
+  ask <task-id> "<question>"        Ask the agent about a task
+  cleanup                           Remove expired finished tasks and logs
   tick save <name> <command>        Save a command as a named tick
-  tick list                         List all saved ticks
+  tick list                         List saved ticks
   tick rm <name>                    Remove a saved tick
-  <tick-name>                       Run a saved tick as a task`)
+  <tick-name>                       Run a saved tick as a task
+`)
 }
 
-func cmdStart(mgr *task.Manager, args []string) {
+func cmdStart(manager *task.Manager, args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: command is required")
-		os.Exit(1)
+		return fmt.Errorf("command is required")
 	}
-
 	name := ""
-	command := ""
-
-	// Parse --name flag
+	commandArgs := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--name" && i+1 < len(args) {
-			name = args[i+1]
-			i++
-		} else {
-			if command != "" {
-				command += " "
+		if args[i] == "--name" {
+			if i+1 >= len(args) {
+				return fmt.Errorf("--name requires a value")
 			}
-			command += args[i]
+			i++
+			name = args[i]
+			continue
 		}
+		commandArgs = append(commandArgs, args[i])
 	}
-
+	command := strings.Join(commandArgs, " ")
+	if strings.TrimSpace(command) == "" {
+		return fmt.Errorf("command is required")
+	}
 	if name == "" {
-		name = command
-		if len(name) > 40 {
-			name = name[:40] + "..."
-		}
+		name = truncate(command, 43)
 	}
-
-	taskID, err := mgr.StartTask(name, command)
+	taskID, err := manager.StartTask(name, command)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
-
-	fmt.Printf("Started task %d: %s\n", taskID, name)
+	fmt.Fprintf(stdout, "Started task %d: %s\n", taskID, name)
+	return nil
 }
 
-func cmdStop(mgr *task.Manager, args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: task ID is required")
-		os.Exit(1)
-	}
-
-	id, err := strconv.Atoi(args[0])
+func cmdStop(manager *task.Manager, args []string, stdout io.Writer) error {
+	taskID, err := taskIDOrLatest(manager, args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid task ID: %s\n", args[0])
-		os.Exit(1)
+		return err
 	}
-
-	if err := mgr.StopTask(id); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+	if err := manager.StopTask(taskID); err != nil {
+		return err
 	}
-
-	fmt.Printf("Stopped task %d\n", id)
+	fmt.Fprintf(stdout, "Stopped task %d\n", taskID)
+	return nil
 }
 
-func cmdList(mgr *task.Manager) {
-	tasks, err := mgr.ListTasks()
+func cmdList(manager *task.Manager, stdout io.Writer) error {
+	tasks, err := manager.ListTasks()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
-
 	if len(tasks) == 0 {
-		fmt.Println("No tasks")
-		return
+		fmt.Fprintln(stdout, "No tasks")
+		return nil
 	}
-
-	fmt.Printf("%-4s %-10s %-30s %-8s %s\n", "ID", "STATUS", "NAME", "PID", "STARTED")
-	fmt.Println(strings.Repeat("-", 80))
-	for _, t := range tasks {
-		fmt.Printf("%-4d %-10s %-30s %-8d %s\n",
-			t.ID, t.Status, truncate(t.Name, 30), t.PID,
-			t.StartTime.Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(stdout, "%-4s %-10s %-30s %-8s %s\n", "ID", "STATUS", "NAME", "PID", "STARTED")
+	fmt.Fprintln(stdout, strings.Repeat("-", 80))
+	for _, task := range tasks {
+		fmt.Fprintf(stdout, "%-4d %-10s %-30s %-8d %s\n",
+			task.ID,
+			task.Status,
+			truncate(task.Name, 30),
+			task.PID,
+			task.StartTime.Format("2006-01-02 15:04:05"),
+		)
 	}
+	return nil
 }
 
-func cmdLogs(mgr *task.Manager, args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: task ID is required")
-		os.Exit(1)
-	}
-
-	id, err := strconv.Atoi(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid task ID: %s\n", args[0])
-		os.Exit(1)
-	}
-
+func cmdLogs(manager *task.Manager, args []string, stdout io.Writer) error {
 	lines := 50
-	for i := 1; i < len(args); i++ {
-		if args[i] == "-n" && i+1 < len(args) {
-			lines, err = strconv.Atoi(args[i+1])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: invalid line count: %s\n", args[i+1])
-				os.Exit(1)
-			}
-			i++
+	var taskArgs []string
+	for i := 0; i < len(args); i++ {
+		if args[i] != "-n" {
+			taskArgs = append(taskArgs, args[i])
+			continue
 		}
+		if i+1 >= len(args) {
+			return fmt.Errorf("-n requires a line count")
+		}
+		i++
+		value, err := strconv.Atoi(args[i])
+		if err != nil || value <= 0 {
+			return fmt.Errorf("invalid line count %q", args[i])
+		}
+		lines = value
 	}
-
-	result, err := mgr.TailLogs(id, lines)
+	taskID, err := taskIDOrLatest(manager, taskArgs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
-
+	result, err := manager.TailLogs(taskID, lines)
+	if err != nil {
+		return err
+	}
 	for _, line := range result.Lines {
-		fmt.Println(line.Content)
+		fmt.Fprintln(stdout, line.Content)
 	}
+	return nil
 }
 
-func cmdAsk(mgr *task.Manager, cfg *config.Config, ollamaHost string, args []string) {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "Error: task ID and question are required")
-		fmt.Fprintln(os.Stderr, "Usage: watchy ask <task-id> \"<question>\"")
-		os.Exit(1)
-	}
-
-	id, err := strconv.Atoi(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid task ID: %s\n", args[0])
-		os.Exit(1)
-	}
-
-	question := strings.Join(args[1:], " ")
-
-	a, err := agent.NewAgentWithModel(mgr, cfg.Model, ollamaHost)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("Asking agent...")
-	answer, err := a.Ask(id, question)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println(answer)
-}
-
-func cmdTUI(mgr *task.Manager, cfg *config.Config, ollamaHost string, tickStore *tick.Store, historyStore *store.HistoryStore) {
-	// Run auto-cleanup before starting TUI
-	cleaned, err := mgr.Cleanup(cfg.RetentionDays)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Auto-cleanup error: %v\n", err)
-	} else if cleaned > 0 {
-		fmt.Printf("Cleaned up %d old task(s)\n", cleaned)
-	}
-
-	a, err := agent.NewAgentWithModel(mgr, cfg.Model, ollamaHost)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating agent: %s\n", err)
-		os.Exit(1)
-	}
-
-	model := tui.New(mgr, a, cfg, tickStore, historyStore)
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	model.SetProgram(p)
-
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
-	}
-}
-
-func cmdCleanup(mgr *task.Manager, cfg *config.Config) {
-	count, err := mgr.Cleanup(cfg.RetentionDays)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Cleaned up %d old task(s)\n", count)
-}
-
-func cmdTick(store *tick.Store, args []string) {
+func taskIDOrLatest(manager *task.Manager, args []string) (int, error) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage:")
-		fmt.Fprintln(os.Stderr, "  watchy tick save <name> <command>")
-		fmt.Fprintln(os.Stderr, "  watchy tick list")
-		fmt.Fprintln(os.Stderr, "  watchy tick rm <name>")
-		os.Exit(1)
+		task, err := manager.GetLatestTask()
+		if err != nil {
+			return 0, err
+		}
+		return task.ID, nil
 	}
+	if len(args) > 1 {
+		return 0, fmt.Errorf("unexpected argument %q", args[1])
+	}
+	taskID, err := strconv.Atoi(args[0])
+	if err != nil || taskID <= 0 {
+		return 0, fmt.Errorf("invalid task ID %q", args[0])
+	}
+	return taskID, nil
+}
 
+func cmdAsk(manager *task.Manager, cfg *config.Config, host string, args []string, stdout io.Writer) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: watchy ask <task-id> \"<question>\"")
+	}
+	taskID, err := strconv.Atoi(args[0])
+	if err != nil || taskID <= 0 {
+		return fmt.Errorf("invalid task ID %q", args[0])
+	}
+	ollamaAgent, err := agent.NewAgentWithModel(manager, cfg.Model, host)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Asking agent…")
+	answer, err := ollamaAgent.Ask(taskID, strings.Join(args[1:], " "))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, answer)
+	return nil
+}
+
+func cmdTUI(
+	manager *task.Manager,
+	cfg *config.Config,
+	host string,
+	tickStore *tick.Store,
+	historyStore *store.HistoryStore,
+) error {
+	ollamaAgent, err := agent.NewAgentWithModel(manager, cfg.Model, host)
+	if err != nil {
+		return fmt.Errorf("create agent: %w", err)
+	}
+	model := tui.New(manager, ollamaAgent, cfg, tickStore, historyStore)
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	model.SetProgram(program)
+	if _, err := program.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func cmdCleanup(manager *task.Manager, cfg *config.Config, stdout io.Writer) error {
+	count, err := manager.Cleanup(cfg.RetentionDays)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Cleaned up %d old task(s)\n", count)
+	return nil
+}
+
+func cmdTick(store *tick.Store, args []string, stdout io.Writer) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: watchy tick <save|list|rm>")
+	}
 	switch args[0] {
 	case "save":
-		cmdTickSave(store, args[1:])
+		if len(args) < 3 {
+			return fmt.Errorf("usage: watchy tick save <name> <command>")
+		}
+		name := args[1]
+		command := strings.Join(args[2:], " ")
+		if err := store.Save(name, command, ""); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Saved tick %q: %s\n", name, command)
+		return nil
 	case "list":
-		cmdTickList(store)
+		ticks := store.List()
+		if len(ticks) == 0 {
+			fmt.Fprintln(stdout, "No ticks saved")
+			fmt.Fprintln(stdout, "Save one with: watchy tick save <name> <command>")
+			return nil
+		}
+		fmt.Fprintf(stdout, "%-15s %s\n", "NAME", "COMMAND")
+		fmt.Fprintln(stdout, strings.Repeat("-", 60))
+		for _, namedTick := range ticks {
+			fmt.Fprintf(stdout, "%-15s %s\n", namedTick.Name, namedTick.Tick.Command)
+		}
+		return nil
 	case "rm":
-		cmdTickRm(store, args[1:])
+		if len(args) != 2 {
+			return fmt.Errorf("usage: watchy tick rm <name>")
+		}
+		if err := store.Remove(args[1]); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Removed tick %q\n", args[1])
+		return nil
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown tick subcommand: %s\n", args[0])
-		os.Exit(1)
+		return fmt.Errorf("unknown tick subcommand %q", args[0])
 	}
 }
 
-func cmdTickSave(store *tick.Store, args []string) {
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: watchy tick save <name> <command>")
-		os.Exit(1)
-	}
-
-	name := args[0]
-	command := strings.Join(args[1:], " ")
-
-	if err := store.Save(name, command, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Saved tick %q: %s\n", name, command)
-}
-
-func cmdTickList(store *tick.Store) {
-	ticks := store.List()
-	if len(ticks) == 0 {
-		fmt.Println("No ticks saved")
-		fmt.Println("Save one with: watchy tick save <name> <command>")
-		return
-	}
-
-	fmt.Printf("%-15s %s\n", "NAME", "COMMAND")
-	fmt.Println(strings.Repeat("-", 60))
-	for _, t := range ticks {
-		fmt.Printf("%-15s %s\n", t.Name, t.Tick.Command)
-	}
-}
-
-func cmdTickRm(store *tick.Store, args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: watchy tick rm <name>")
-		os.Exit(1)
-	}
-
-	if err := store.Remove(args[0]); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Removed tick %q\n", args[0])
-}
-
-func cmdRunTick(mgr *task.Manager, store *tick.Store, name string) {
-	t, err := store.Get(name)
+func cmdRunTick(manager *task.Manager, store *tick.Store, name string, stdout io.Writer) error {
+	savedTick, err := store.Get(name)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
-
-	taskID, err := mgr.StartTask(name, t.Command)
+	taskID, err := manager.StartTask(name, savedTick.Command)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
-
-	fmt.Printf("Started tick %q as task %d: %s\n", name, taskID, t.Command)
-	fmt.Printf("View logs: watchy logs %d\n", taskID)
+	fmt.Fprintf(stdout, "Started tick %q as task %d: %s\n", name, taskID, savedTick.Command)
+	fmt.Fprintf(stdout, "View logs: watchy logs %d\n", taskID)
+	return nil
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
+func truncate(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
 	}
-	return s[:max-3] + "..."
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }
