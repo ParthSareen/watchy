@@ -30,7 +30,7 @@ func NewAgent(taskManager *task.Manager, ollamaHost string) (*Agent, error) {
 
 	return &Agent{
 		client:      client,
-		model:       "glm-4.7:cloud",
+		model:       "glm-5.2:cloud",
 		taskManager: taskManager,
 	}, nil
 }

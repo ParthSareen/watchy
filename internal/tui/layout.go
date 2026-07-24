@@ -26,3 +26,11 @@ func (m *Model) recalcLayout() {
 	m.logViewport.Height = m.innerHeight
 	m.chat.SetSize(m.rightWidth, m.innerHeight)
 }
+
+func (m *Model) toggleTaskSidebar() {
+	m.leftHidden = !m.leftHidden
+	if m.leftHidden && m.focusedArea == focusTasks {
+		m.setFocus(m.rightFocusTarget())
+	}
+	m.recalcLayout()
+}

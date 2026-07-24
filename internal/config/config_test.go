@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+func TestNewUsesGLM52CloudByDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "glm-5.2:cloud" {
+		t.Fatalf("Model = %q, want glm-5.2:cloud", cfg.Model)
+	}
+}
+
 func TestSavePreservesUnknownFieldsAndComments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	input := "# keep this comment\nretention_days: 7\nmodel: old\ncustom_setting: yes\n"

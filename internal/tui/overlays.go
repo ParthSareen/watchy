@@ -153,7 +153,7 @@ func (m Model) renderModelPicker() string {
 
 func (m Model) renderHelp() string {
 	sections := []string{
-		"Navigation\n  tab / shift+tab  focus visible panes\n  l / c / s          logs, chat, or split view\n  h                  hide or show tasks\n  enter              open selected task or compose\n  esc                leave the current mode",
+		"Navigation\n  tab / shift+tab  focus visible panes\n  l / c / s          logs, chat, or split view\n  h                  hide or show tasks\n  enter              open task, toggle sidebar, or compose\n  esc                leave the current mode",
 		"Tasks\n  j/k or ↑/↓         select task\n  x                  stop selected running task\n  r                  restart selected finished task",
 		"Logs\n  j/k, g/G           move or jump\n  /, n/N             search and move matches\n  v, y               select and copy\n  </>                horizontal scroll\n  u                  show or hide routine noise",
 		"Chat\n  i / enter          focus composer\n  ctrl+j             newline\n  esc                blur or cancel request\n  e / y              expand or copy latest tool",

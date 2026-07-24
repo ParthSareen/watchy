@@ -53,7 +53,7 @@ func New() (*Config, error) {
 		TicksPath:     ticksPath,
 		HistoryPath:   historyPath,
 		RetentionDays: 7,
-		Model:         "glm-4.7:cloud",
+		Model:         "glm-5.2:cloud",
 		Theme:         "green",
 		ColorMode:     "auto",
 	}

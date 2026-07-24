@@ -15,7 +15,7 @@ go install github.com/parth/watchy/cmd/watchy@latest
 
 Requires [Ollama](https://ollama.com). Recommended models:
 
-- `glm-4.7:cloud` -- default, runs via Ollama cloud
+- `glm-5.2:cloud` -- default, runs via Ollama cloud
 - `glm-4.7-flash` -- runs fully local
 
 ## Usage
@@ -52,7 +52,7 @@ c            show chat
 s            toggle split view
 [/]          cycle logs, chat, and split views
 h            hide/show sidebar
-enter        open selected task logs / focus chat / send chat
+enter        open task logs / toggle task sidebar from logs / focus or send chat
 ?            show all keybindings
 ```
 
@@ -128,7 +128,7 @@ Optional config at `~/.watchy/config.yaml`:
 
 ```yaml
 retention_days: 7
-model: "glm-4.7:cloud"
+model: "glm-5.2:cloud"
 theme: "green"
 color_mode: "auto"
 ```

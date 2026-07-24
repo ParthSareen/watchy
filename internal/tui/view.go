@@ -313,7 +313,7 @@ func (m Model) contextualHelp() string {
 	case focusTasks:
 		return "j/k move • enter logs • d details • x stop • r restart • tab focus • ? help"
 	case focusLogs:
-		return "j/k move • / search • v select • y copy • l/c/s view • tab focus • ? help"
+		return "j/k move • enter sidebar • / search • v select • y copy • l/c/s view • tab focus • ? help"
 	case focusChatView:
 		return "j/k scroll • i compose • e expand • l/c/s view • tab focus • ? help"
 	case focusChatInput:

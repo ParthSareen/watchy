@@ -2,6 +2,8 @@ package tui
 
 import (
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestCycleFocusOnlyMovesThroughVisibleLogPanes(t *testing.T) {
@@ -90,5 +92,35 @@ func TestPaneActiveTracksSplitLogAndChatFocus(t *testing.T) {
 	}
 	if m.paneIsActive(paneRight) {
 		t.Fatal("logs pane should not be active")
+	}
+}
+
+func TestEnterTogglesTaskSidebarFromLogs(t *testing.T) {
+	m := Model{
+		width:       100,
+		height:      30,
+		rightMode:   modeLog,
+		focusedArea: focusLogs,
+		chat:        newChatModel(maxChatMessages),
+	}
+	m.recalcLayout()
+	visibleWidth := m.rightWidth
+
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.leftHidden {
+		t.Fatal("Enter on focused logs should collapse the task sidebar")
+	}
+	if m.rightWidth <= visibleWidth {
+		t.Fatalf("rightWidth = %d, want greater than %d", m.rightWidth, visibleWidth)
+	}
+
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.leftHidden {
+		t.Fatal("Enter on focused logs should restore the task sidebar")
+	}
+	if m.rightWidth != visibleWidth {
+		t.Fatalf("rightWidth = %d, want %d after restore", m.rightWidth, visibleWidth)
 	}
 }

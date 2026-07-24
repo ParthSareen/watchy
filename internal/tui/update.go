@@ -615,11 +615,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "h":
-		m.leftHidden = !m.leftHidden
-		if m.leftHidden && m.focusedArea == focusTasks {
-			m.setFocus(focusLogs)
-		}
-		m.recalcLayout()
+		m.toggleTaskSidebar()
 	case "l":
 		return m, m.showRightMode(modeLog)
 	case "c":
@@ -633,6 +629,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focusedArea == focusTasks && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
 			// Open logs for selected task
 			return m, m.showRightMode(modeLog)
+		} else if m.logsFocused() && m.rightMode == modeLog {
+			m.toggleTaskSidebar()
+			return m, nil
 		} else if m.chatViewFocused() {
 			return m, m.setFocus(focusChatInput)
 		}
