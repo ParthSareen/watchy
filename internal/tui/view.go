@@ -107,7 +107,7 @@ func (m Model) View() string {
 
 	var leftPane string
 	if !m.leftHidden {
-		leftContent := m.renderTaskList(m.leftWidth-2, 0)
+		leftContent := m.renderTaskList(m.leftWidth-2, m.innerHeight)
 		leftPane = m.applyBorder(paneLeft, m.leftWidth, m.boxHeight, "Tasks", leftContent)
 	}
 
@@ -151,7 +151,7 @@ func (m Model) View() string {
 		rightPane = m.applyBorder(paneChat, m.rightWidth, m.boxHeight, rightTitle, rightContent)
 	} else {
 		// Split mode: chat and logs side by side
-		splitWidth := m.rightWidth/2 - 1
+		logWidth, chatWidth := m.splitPaneWidths()
 
 		// Logs pane (left half of right section)
 		logsTitle := m.viewTabs()
@@ -181,12 +181,12 @@ func (m Model) View() string {
 		if m.searchMode {
 			logsContent += "\n" + m.searchInput.View()
 		}
-		logsPane := m.applyBorder(paneRight, splitWidth, m.boxHeight, logsTitle, logsContent)
+		logsPane := m.applyBorder(paneRight, logWidth, m.boxHeight, logsTitle, logsContent)
 
 		// Chat pane (right half of right section)
 		chatTitle := "Chat"
 		chatContent := m.chat.View(m.focusedArea == focusChatInput)
-		chatPane := m.applyBorder(paneChat, splitWidth, m.boxHeight, chatTitle, chatContent)
+		chatPane := m.applyBorder(paneChat, chatWidth, m.boxHeight, chatTitle, chatContent)
 
 		rightPane = lipgloss.JoinHorizontal(lipgloss.Top, logsPane, chatPane)
 	}
@@ -215,11 +215,12 @@ func (m Model) applyBorder(p pane, width, height int, title, content string) str
 		BorderForeground(borderColor).
 		Width(width)
 
-	if height > 0 {
-		style = style.Height(height)
+	contentHeight := height - 2
+	if contentHeight > 0 {
+		style = style.Height(contentHeight)
 	}
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(bright)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(bright).MaxWidth(width)
 	return style.Render(titleStyle.Render(title) + "\n" + content)
 }
 
@@ -231,12 +232,17 @@ func (m Model) renderTaskList(width, height int) string {
 
 	dimStyle := lipgloss.NewStyle().Foreground(dimGrayColor)
 
+	if height <= 0 {
+		return ""
+	}
 	if len(m.tasks) == 0 {
 		return dimStyle.Render("No tasks. Use chat to start one.")
 	}
 
-	var lines []string
-	for i, task := range m.tasks {
+	start, end := m.taskWindow(height)
+	lines := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		task := m.tasks[i]
 		var indicator string
 		switch task.Status {
 		case "running":
@@ -333,7 +339,18 @@ func (m Model) logContentView() string {
 	if m.originalLogContent == "" {
 		return m.dimText("No output yet.")
 	}
-	return m.logViewport.View()
+	viewport := m.logViewport
+	viewport.Height = m.innerHeight
+	if m.searchMode {
+		viewport.Height--
+	}
+	if m.commandMode {
+		viewport.Height--
+	}
+	if viewport.Height < 0 {
+		viewport.Height = 0
+	}
+	return viewport.View()
 }
 
 func truncateRunes(value string, width int) string {

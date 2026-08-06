@@ -48,6 +48,33 @@ func TestMouseClickTaskSelectsAndFocusesTaskList(t *testing.T) {
 	}
 }
 
+func TestMouseClickTaskUsesVisibleWindowOffset(t *testing.T) {
+	m := testMouseModel()
+	m.height = 12
+	m.tasks = make([]*task.Task, 20)
+	for i := range m.tasks {
+		m.tasks[i] = &task.Task{ID: i + 1, Name: "task", Status: "stopped"}
+	}
+	m.selectedIdx = 15
+	m.recalcLayout()
+	start, _ := m.taskWindow(m.innerHeight)
+	rect, ok := m.paneRect(paneLeft)
+	if !ok {
+		t.Fatal("expected task pane")
+	}
+
+	updated, _ := m.handleMouse(tea.MouseMsg{
+		X:      2,
+		Y:      rect.contentY(),
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+
+	if updated.selectedIdx != start {
+		t.Fatalf("selectedIdx = %d, want visible start %d", updated.selectedIdx, start)
+	}
+}
+
 func TestMouseClickChatComposerFocusesInput(t *testing.T) {
 	m := testMouseModel()
 	m.rightMode = modeChat

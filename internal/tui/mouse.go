@@ -98,8 +98,9 @@ func (m Model) handleTaskClick(y int) (Model, tea.Cmd) {
 	if !ok {
 		return m, cmd
 	}
-	idx := y - rect.contentY()
-	if idx < 0 || idx >= len(m.tasks) {
+	start, end := m.taskWindow(m.innerHeight)
+	idx := start + y - rect.contentY()
+	if idx < start || idx >= end {
 		return m, cmd
 	}
 
@@ -258,8 +259,8 @@ func (m Model) paneRect(p pane) (paneRect, bool) {
 			return paneRect{}, false
 		}
 		if m.rightMode == modeSplit {
-			splitWidth := m.rightWidth/2 - 1
-			return paneRect{x: rightStart, y: 0, width: renderedPaneWidth(splitWidth), height: m.boxHeight}, true
+			logWidth, _ := m.splitPaneWidths()
+			return paneRect{x: rightStart, y: 0, width: renderedPaneWidth(logWidth), height: m.boxHeight}, true
 		}
 		return paneRect{x: rightStart, y: 0, width: renderedPaneWidth(m.rightWidth), height: m.boxHeight}, true
 	case paneChat:
@@ -267,9 +268,9 @@ func (m Model) paneRect(p pane) (paneRect, bool) {
 			return paneRect{}, false
 		}
 		if m.rightMode == modeSplit {
-			splitWidth := m.rightWidth/2 - 1
-			logWidth := renderedPaneWidth(splitWidth)
-			return paneRect{x: rightStart + logWidth, y: 0, width: renderedPaneWidth(splitWidth), height: m.boxHeight}, true
+			logWidth, chatWidth := m.splitPaneWidths()
+			logRenderedWidth := renderedPaneWidth(logWidth)
+			return paneRect{x: rightStart + logRenderedWidth, y: 0, width: renderedPaneWidth(chatWidth), height: m.boxHeight}, true
 		}
 		return paneRect{x: rightStart, y: 0, width: renderedPaneWidth(m.rightWidth), height: m.boxHeight}, true
 	default:
