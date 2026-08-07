@@ -158,10 +158,17 @@ func parseOptions(args []string) (options, error) {
 		}
 	}
 	if len(remaining) > 0 {
-		opts.command = remaining[0]
+		opts.command = canonicalCommand(remaining[0])
 		opts.args = remaining[1:]
 	}
 	return opts, nil
+}
+
+func canonicalCommand(command string) string {
+	if command == "run" {
+		return "start"
+	}
+	return command
 }
 
 func isBuiltInCommand(command string) bool {
@@ -206,6 +213,7 @@ Global flags:
 
 Commands:
   start <command> [--name <name>]   Start a background task
+  run <command> [--name <name>]     Alias for start
   stop [task-id]                    Stop a task (default: latest)
   list                              List all tasks
   logs [task-id] [-n <lines>]       View task logs

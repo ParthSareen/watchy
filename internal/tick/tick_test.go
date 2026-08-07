@@ -18,3 +18,13 @@ func TestSaveFailureDoesNotMutateMemory(t *testing.T) {
 		t.Fatal("failed save mutated in-memory ticks")
 	}
 }
+
+func TestSaveRejectsRunAsReservedCommand(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "ticks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("run", "go test ./...", ""); err == nil || err.Error() != `"run" is a reserved command name` {
+		t.Fatalf("error = %v", err)
+	}
+}

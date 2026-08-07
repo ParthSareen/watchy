@@ -28,6 +28,7 @@ watchy --online                     # launch TUI using ollama.com cloud
 watchy --model llama3.1:8b          # launch TUI with a different model
 watchy --version                    # print version
 watchy start 'make serve'           # start a background task
+watchy run 'make serve'             # same as watchy start
 watchy start 'npm test' --name ci   # start with a custom name
 watchy stop 3                       # stop task 3
 watchy list                         # list all tasks

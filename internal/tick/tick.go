@@ -30,7 +30,7 @@ type Store struct {
 }
 
 var reservedNames = map[string]bool{
-	"start": true, "stop": true, "list": true, "logs": true,
+	"start": true, "run": true, "stop": true, "list": true, "logs": true,
 	"ask": true, "cleanup": true, "tick": true,
 }
 
