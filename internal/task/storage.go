@@ -57,6 +57,14 @@ func NewStorage(dbPath string) (*Storage, error) {
 }
 
 func (s *Storage) initSchema() error {
+	exists, err := s.tableExists("tasks")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return s.ensureColumn("work_dir", "TEXT NOT NULL DEFAULT ''")
+	}
+
 	schema := `
 	CREATE TABLE IF NOT EXISTS tasks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,11 +83,15 @@ func (s *Storage) initSchema() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to create schema: %w", err)
 	}
-	if err := s.ensureColumn("work_dir", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-
 	return nil
+}
+
+func (s *Storage) tableExists(name string) (bool, error) {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&count); err != nil {
+		return false, fmt.Errorf("inspect schema: %w", err)
+	}
+	return count > 0, nil
 }
 
 func (s *Storage) ensureColumn(name, definition string) error {

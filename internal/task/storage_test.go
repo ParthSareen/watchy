@@ -47,3 +47,31 @@ func TestNewStorageMigratesExistingTasksWithWorkingDirectory(t *testing.T) {
 		t.Fatalf("migrated WorkDir = %q, want empty fallback", task.WorkDir)
 	}
 }
+
+func TestNewStorageReadsExistingReadOnlyDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "watchy.db")
+	storage, err := NewStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.CreateTask("existing", "true", "/tmp", 1, "/tmp/existing.log"); err != nil {
+		storage.Close()
+		t.Fatal(err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	readonly, err := NewStorage("file:" + path + "?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readonly.Close()
+	value, err := readonly.GetLatestTask()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Name != "existing" {
+		t.Fatalf("task name = %q, want existing", value.Name)
+	}
+}

@@ -32,12 +32,29 @@ watchy run 'make serve'             # same as watchy start
 watchy start 'npm test' --name ci   # start with a custom name
 watchy stop 3                       # stop task 3
 watchy list                         # list all tasks
+watchy list --wide                  # list tasks without truncating names
+watchy list --json                  # machine-readable task inventory
+watchy show 3                       # full command, directory, process, and log details
+watchy show 3 --json                # machine-readable details for one task
 watchy logs 3 -n 100                # last 100 lines of task 3
 watchy ask 3 "any errors?"          # ask the agent about task 3
 watchy cleanup                      # remove old finished tasks
 ```
 
 The `--model` flag works with any command.
+
+## Recovering an existing task
+
+Start with `watchy list --wide` to find a task without losing a long name, then
+run `watchy show <id>` before handing it off. `show` prints the exact task name,
+command, working directory, process-group leader PID, timestamps, log path, log
+size, and last log activity. Use `--json` with either command when another tool
+needs stable machine-readable output.
+
+`list` and `show` synchronize persisted task status when possible. If their
+status update cannot be saved (for example, a read-only database), they still
+return the persisted task data, print a warning to stderr, and set
+`status_fresh` to `false` in JSON. Treat those statuses as potentially stale.
 
 ## TUI keybindings
 

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/parth/watchy/internal/agent"
@@ -90,8 +92,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	defer storage.Close()
 	manager := task.NewManager(storage, cfg.LogsDir)
+	statusFresh := true
 	if err := manager.SyncTaskStatus(); err != nil {
-		return fmt.Errorf("sync task status: %w", err)
+		if opts.command != "list" && opts.command != "show" {
+			return fmt.Errorf("sync task status: %w", err)
+		}
+		statusFresh = false
+		fmt.Fprintf(stderr, "Warning: task status may be stale; could not persist status synchronization: %s\n", err)
 	}
 
 	switch opts.command {
@@ -100,7 +107,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "stop":
 		return cmdStop(manager, opts.args, stdout)
 	case "list":
-		return cmdList(manager, stdout)
+		return cmdList(manager, opts.args, statusFresh, stdout)
+	case "show":
+		return cmdShow(manager, opts.args, statusFresh, stdout)
 	case "logs":
 		return cmdLogs(manager, opts.args, stdout)
 	case "cleanup":
@@ -173,7 +182,7 @@ func canonicalCommand(command string) string {
 
 func isBuiltInCommand(command string) bool {
 	switch command {
-	case "start", "stop", "list", "logs", "ask", "cleanup":
+	case "start", "stop", "list", "show", "logs", "ask", "cleanup":
 		return true
 	default:
 		return false
@@ -215,7 +224,8 @@ Commands:
   start <command> [--name <name>]   Start a background task
   run <command> [--name <name>]     Alias for start
   stop [task-id]                    Stop a task (default: latest)
-  list                              List all tasks
+  list [--wide|--json]               List all tasks
+  show <task-id> [--json]            Show full task identity and log metadata
   logs [task-id] [-n <lines>]       View task logs
   ask <task-id> "<question>"        Ask the agent about a task
   cleanup                           Remove expired finished tasks and logs
@@ -270,10 +280,111 @@ func cmdStop(manager *task.Manager, args []string, stdout io.Writer) error {
 	return nil
 }
 
-func cmdList(manager *task.Manager, stdout io.Writer) error {
+type listOptions struct {
+	wide bool
+	json bool
+}
+
+func parseListOptions(args []string) (listOptions, error) {
+	var opts listOptions
+	for _, arg := range args {
+		switch arg {
+		case "--wide":
+			opts.wide = true
+		case "--json":
+			opts.json = true
+		default:
+			return listOptions{}, fmt.Errorf("usage: watchy list [--wide|--json]")
+		}
+	}
+	if opts.wide && opts.json {
+		return listOptions{}, fmt.Errorf("--wide cannot be used with --json")
+	}
+	return opts, nil
+}
+
+type showOptions struct {
+	taskID int
+	json   bool
+}
+
+func parseShowOptions(args []string) (showOptions, error) {
+	if len(args) == 0 || len(args) > 2 {
+		return showOptions{}, fmt.Errorf("usage: watchy show <task-id> [--json]")
+	}
+	taskID, err := strconv.Atoi(args[0])
+	if err != nil || taskID <= 0 {
+		return showOptions{}, fmt.Errorf("invalid task ID %q", args[0])
+	}
+	if len(args) == 2 && args[1] != "--json" {
+		return showOptions{}, fmt.Errorf("usage: watchy show <task-id> [--json]")
+	}
+	return showOptions{taskID: taskID, json: len(args) == 2}, nil
+}
+
+type taskDetailsOutput struct {
+	ID                    int        `json:"id"`
+	Name                  string     `json:"name"`
+	Status                string     `json:"status"`
+	Command               string     `json:"command"`
+	WorkDir               string     `json:"work_dir"`
+	ProcessGroupLeaderPID int        `json:"process_group_leader_pid"`
+	StartTime             time.Time  `json:"start_time"`
+	EndTime               *time.Time `json:"end_time"`
+	LogPath               string     `json:"log_path"`
+	LogExists             bool       `json:"log_exists"`
+	LogSizeBytes          *int64     `json:"log_size_bytes"`
+	LastLogActivity       *time.Time `json:"last_log_activity"`
+	LogError              string     `json:"log_error,omitempty"`
+}
+
+type listOutput struct {
+	StatusFresh bool                `json:"status_fresh"`
+	Tasks       []taskDetailsOutput `json:"tasks"`
+}
+
+type showOutput struct {
+	StatusFresh bool              `json:"status_fresh"`
+	Task        taskDetailsOutput `json:"task"`
+}
+
+func taskDetails(manager *task.Manager, value *task.Task) taskDetailsOutput {
+	metadata := manager.LogMetadata(value)
+	details := taskDetailsOutput{
+		ID:                    value.ID,
+		Name:                  value.Name,
+		Status:                value.Status,
+		Command:               value.Command,
+		WorkDir:               value.WorkDir,
+		ProcessGroupLeaderPID: value.PID,
+		StartTime:             value.StartTime,
+		EndTime:               value.EndTime,
+		LogPath:               value.LogPath,
+		LogExists:             metadata.Exists,
+		LogSizeBytes:          metadata.SizeBytes,
+		LastLogActivity:       metadata.LastActivity,
+	}
+	if metadata.Error != nil {
+		details.LogError = metadata.Error.Error()
+	}
+	return details
+}
+
+func cmdList(manager *task.Manager, args []string, statusFresh bool, stdout io.Writer) error {
+	opts, err := parseListOptions(args)
+	if err != nil {
+		return err
+	}
 	tasks, err := manager.ListTasks()
 	if err != nil {
 		return err
+	}
+	if opts.json {
+		output := listOutput{StatusFresh: statusFresh, Tasks: make([]taskDetailsOutput, 0, len(tasks))}
+		for _, value := range tasks {
+			output.Tasks = append(output.Tasks, taskDetails(manager, value))
+		}
+		return json.NewEncoder(stdout).Encode(output)
 	}
 	if len(tasks) == 0 {
 		fmt.Fprintln(stdout, "No tasks")
@@ -281,15 +392,60 @@ func cmdList(manager *task.Manager, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "%-4s %-10s %-30s %-8s %s\n", "ID", "STATUS", "NAME", "PID", "STARTED")
 	fmt.Fprintln(stdout, strings.Repeat("-", 80))
-	for _, task := range tasks {
+	for _, value := range tasks {
+		name := truncate(value.Name, 30)
+		if opts.wide {
+			name = value.Name
+		}
 		fmt.Fprintf(stdout, "%-4d %-10s %-30s %-8d %s\n",
-			task.ID,
-			task.Status,
-			truncate(task.Name, 30),
-			task.PID,
-			task.StartTime.Format("2006-01-02 15:04:05"),
+			value.ID,
+			value.Status,
+			name,
+			value.PID,
+			value.StartTime.Format("2006-01-02 15:04:05"),
 		)
 	}
+	return nil
+}
+
+func cmdShow(manager *task.Manager, args []string, statusFresh bool, stdout io.Writer) error {
+	opts, err := parseShowOptions(args)
+	if err != nil {
+		return err
+	}
+	value, err := manager.GetTask(opts.taskID)
+	if err != nil {
+		return err
+	}
+	details := taskDetails(manager, value)
+	if opts.json {
+		return json.NewEncoder(stdout).Encode(showOutput{StatusFresh: statusFresh, Task: details})
+	}
+	endTime := "running"
+	if details.EndTime != nil {
+		endTime = details.EndTime.Format(time.RFC3339)
+	}
+	logSize := "missing"
+	if details.LogSizeBytes != nil {
+		logSize = strconv.FormatInt(*details.LogSizeBytes, 10) + " bytes"
+	}
+	lastLogActivity := "missing"
+	if details.LastLogActivity != nil {
+		lastLogActivity = details.LastLogActivity.Format(time.RFC3339)
+	}
+	if details.LogError != "" {
+		lastLogActivity = "unavailable: " + details.LogError
+	}
+	fmt.Fprintf(stdout, "Task %d: %s\n\n", details.ID, details.Name)
+	fmt.Fprintf(stdout, "Status:                   %s\n", details.Status)
+	fmt.Fprintf(stdout, "Command:                  %s\n", details.Command)
+	fmt.Fprintf(stdout, "Working directory:        %s\n", details.WorkDir)
+	fmt.Fprintf(stdout, "Process group leader PID: %d\n", details.ProcessGroupLeaderPID)
+	fmt.Fprintf(stdout, "Started:                  %s\n", details.StartTime.Format(time.RFC3339))
+	fmt.Fprintf(stdout, "Ended:                    %s\n", endTime)
+	fmt.Fprintf(stdout, "Log path:                 %s\n", details.LogPath)
+	fmt.Fprintf(stdout, "Log size:                 %s\n", logSize)
+	fmt.Fprintf(stdout, "Last log activity:        %s\n", lastLogActivity)
 	return nil
 }
 

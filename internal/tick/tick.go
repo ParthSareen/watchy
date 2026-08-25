@@ -31,7 +31,7 @@ type Store struct {
 
 var reservedNames = map[string]bool{
 	"start": true, "run": true, "stop": true, "list": true, "logs": true,
-	"ask": true, "cleanup": true, "tick": true,
+	"show": true, "ask": true, "cleanup": true, "tick": true,
 }
 
 // NewStore creates a Store for the given JSON file path, loading existing ticks if the file exists.

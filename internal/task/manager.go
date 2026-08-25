@@ -30,6 +30,15 @@ type logCursor struct {
 	lines          []LogLine
 }
 
+// LogMetadata describes the current state of a task's log file. SizeBytes and
+// LastActivity are nil when the log is missing or cannot be inspected.
+type LogMetadata struct {
+	Exists       bool
+	SizeBytes    *int64
+	LastActivity *time.Time
+	Error        error
+}
+
 const taskRunnerScript = `bash -c "$1"
 status=$?
 tmp="$2.tmp.$$"
@@ -174,6 +183,24 @@ func (m *Manager) GetTask(id int) (*Task, error) {
 
 func (m *Manager) GetLatestTask() (*Task, error) {
 	return m.storage.GetLatestTask()
+}
+
+// LogMetadata returns the current filesystem metadata for a task's log file.
+func (m *Manager) LogMetadata(task *Task) LogMetadata {
+	info, err := os.Stat(task.LogPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return LogMetadata{Error: err}
+		}
+		return LogMetadata{}
+	}
+	size := info.Size()
+	lastActivity := info.ModTime()
+	return LogMetadata{
+		Exists:       true,
+		SizeBytes:    &size,
+		LastActivity: &lastActivity,
+	}
 }
 
 // TailLogs reads the last N lines from a task's log file.
