@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -100,9 +101,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "stop":
 		return cmdStop(manager, opts.args, stdout)
 	case "list":
-		return cmdList(manager, stdout)
+		return cmdList(manager, opts.args, stdout)
+	case "info":
+		return cmdInfo(manager, opts.args, stdout)
 	case "logs":
 		return cmdLogs(manager, opts.args, stdout)
+	case "restart":
+		return cmdRestart(manager, opts.args, stdout)
 	case "cleanup":
 		return cmdCleanup(manager, cfg, stdout)
 	case "ask":
@@ -173,7 +178,7 @@ func canonicalCommand(command string) string {
 
 func isBuiltInCommand(command string) bool {
 	switch command {
-	case "start", "stop", "list", "logs", "ask", "cleanup":
+	case "start", "stop", "list", "info", "logs", "restart", "ask", "cleanup":
 		return true
 	default:
 		return false
@@ -215,8 +220,10 @@ Commands:
   start <command> [--name <name>]   Start a background task
   run <command> [--name <name>]     Alias for start
   stop [task-id]                    Stop a task (default: latest)
-  list                              List all tasks
+  list [--json]                     List all tasks
+  info <task-id> [--json]           Show details for a task
   logs [task-id] [-n <lines>]       View task logs
+  restart <task-id>                 Restart a stopped or crashed task
   ask <task-id> "<question>"        Ask the agent about a task
   cleanup                           Remove expired finished tasks and logs
   tick save <name> <command>        Save a command as a named tick
@@ -270,10 +277,26 @@ func cmdStop(manager *task.Manager, args []string, stdout io.Writer) error {
 	return nil
 }
 
-func cmdList(manager *task.Manager, stdout io.Writer) error {
+func cmdList(manager *task.Manager, args []string, stdout io.Writer) error {
+	asJSON := false
+	for _, a := range args {
+		if a == "--json" {
+			asJSON = true
+		} else {
+			return fmt.Errorf("unexpected argument %q", a)
+		}
+	}
 	tasks, err := manager.ListTasks()
 	if err != nil {
 		return err
+	}
+	if asJSON {
+		if tasks == nil {
+			tasks = []*task.Task{}
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(tasksToInfo(tasks))
 	}
 	if len(tasks) == 0 {
 		fmt.Fprintln(stdout, "No tasks")
@@ -289,6 +312,109 @@ func cmdList(manager *task.Manager, stdout io.Writer) error {
 			task.PID,
 			task.StartTime.Format("2006-01-02 15:04:05"),
 		)
+	}
+	return nil
+}
+
+// taskInfo is the machine- and human-readable representation of a task used by
+// `watchy list --json` and `watchy info`.
+type taskInfo struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Command  string `json:"command"`
+	WorkDir  string `json:"work_dir"`
+	Status   string `json:"status"`
+	PID      int    `json:"pid"`
+	Started  string `json:"started"`
+	Ended    string `json:"ended,omitempty"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	LogPath  string `json:"log_path"`
+}
+
+func tasksToInfo(tasks []*task.Task) []taskInfo {
+	out := make([]taskInfo, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, taskToInfo(t))
+	}
+	return out
+}
+
+func taskToInfo(t *task.Task) taskInfo {
+	info := taskInfo{
+		ID:      t.ID,
+		Name:    t.Name,
+		Command: t.Command,
+		WorkDir: t.WorkDir,
+		Status:  t.Status,
+		PID:     t.PID,
+		Started: t.StartTime.Format("2006-01-02 15:04:05"),
+		LogPath: t.LogPath,
+	}
+	if t.EndTime != nil {
+		info.Ended = t.EndTime.Format("2006-01-02 15:04:05")
+	}
+	if code, ok := task.ExitCode(t.LogPath); ok {
+		info.ExitCode = &code
+	}
+	return info
+}
+
+func cmdInfo(manager *task.Manager, args []string, stdout io.Writer) error {
+	asJSON := false
+	var idArgs []string
+	for _, a := range args {
+		if a == "--json" {
+			asJSON = true
+		} else {
+			idArgs = append(idArgs, a)
+		}
+	}
+	taskID, err := taskIDOrLatest(manager, idArgs)
+	if err != nil {
+		return err
+	}
+	t, err := manager.GetTask(taskID)
+	if err != nil {
+		return err
+	}
+	info := taskToInfo(t)
+	if asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(info)
+	}
+	fmt.Fprintf(stdout, "ID:       %d\n", info.ID)
+	fmt.Fprintf(stdout, "Name:     %s\n", info.Name)
+	fmt.Fprintf(stdout, "Status:   %s\n", info.Status)
+	fmt.Fprintf(stdout, "PID:      %d\n", info.PID)
+	fmt.Fprintf(stdout, "Started:  %s\n", info.Started)
+	if info.Ended != "" {
+		fmt.Fprintf(stdout, "Ended:    %s\n", info.Ended)
+	}
+	if info.ExitCode != nil {
+		fmt.Fprintf(stdout, "ExitCode: %d\n", *info.ExitCode)
+	}
+	fmt.Fprintf(stdout, "Dir:      %s\n", info.WorkDir)
+	fmt.Fprintf(stdout, "Log:      %s\n", info.LogPath)
+	fmt.Fprintf(stdout, "Command:  %s\n", info.Command)
+	return nil
+}
+
+func cmdRestart(manager *task.Manager, args []string, stdout io.Writer) error {
+	taskID, err := taskIDOrLatest(manager, args)
+	if err != nil {
+		return err
+	}
+	newID, err := manager.RestartTask(taskID)
+	if err != nil {
+		return err
+	}
+	t, err := manager.GetTask(int(newID))
+	if err == nil {
+		fmt.Fprintf(stdout, "Restarted task %d as task %d: %s\n", taskID, newID, t.Name)
+		fmt.Fprintf(stdout, "View logs: watchy logs %d\n", newID)
+	} else {
+		fmt.Fprintf(stdout, "Restarted task %d as task %d\n", taskID, newID)
 	}
 	return nil
 }
@@ -376,7 +502,7 @@ func cmdTUI(
 		return fmt.Errorf("create agent: %w", err)
 	}
 	model := tui.New(manager, ollamaAgent, cfg, tickStore, historyStore)
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	program := tea.NewProgram(&model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.SetProgram(program)
 	if _, err := program.Run(); err != nil {
 		return err

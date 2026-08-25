@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/parth/watchy/internal/agent"
 	"github.com/parth/watchy/internal/config"
@@ -73,9 +72,8 @@ type Model struct {
 	tasksLoaded   bool
 	pendingTaskID int64
 
-	logViewport viewport.Model
-	chat        chatModel
-	logsLoading bool
+	logs logsModel
+	chat chatModel
 
 	agentBusy   bool
 	agentCancel context.CancelFunc
@@ -107,46 +105,14 @@ type Model struct {
 	// Pending count for vim-style motions (e.g., 5j moves down 5 lines)
 	pendingCount int
 
-	// Command mode for :<line_number>
-	commandMode  bool
-	commandInput textinput.Model
+	// Task sidebar filter: when true only running tasks are shown
+	filterRunning bool
 
-	// Log search state
-	searchMode         bool
-	searchInput        textinput.Model
-	searchTerm         string
-	searchMatches      []int
-	searchMatchLines   []int
-	matchIndex         int
-	allLogContent      string
-	allRawLogContent   string
-	allLogLineNumbers  []int
-	originalLogContent string
-	rawLogContent      string
-	logLineNumbers     []int
-	copied             bool
-	showLogNoise       bool
-	hiddenLogNoise     int
-
-	// Cursor and visual selection (vim-style)
-	cursorLine  int  // current cursor line (0-indexed)
-	visualMode  bool // true when in visual selection mode
-	visualStart int  // anchor line when v was pressed
-
-	// Horizontal scroll for logs
-	logXOffset int
+	copied bool
 }
 
 // New creates a new TUI model
 func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick.Store, historyStore *store.HistoryStore) Model {
-	si := textinput.New()
-	si.Placeholder = "Search..."
-	si.Prompt = "/"
-	si.Width = 30
-
-	ci := textinput.New()
-	ci.Prompt = ":"
-
 	mi := textinput.New()
 	mi.Prompt = "Filter: "
 	mi.Placeholder = "type a model name"
@@ -184,10 +150,8 @@ func New(mgr *task.Manager, ag *agent.Agent, cfg *config.Config, tickStore *tick
 		rightMode:        modeLog,
 		themeIdx:         themeIdx,
 		lightMode:        lightMode,
-		logViewport:      viewport.New(0, 0),
+		logs:             newLogsModel(),
 		chat:             chat,
-		searchInput:      si,
-		commandInput:     ci,
 		modelPickerInput: mi,
 		programRef:       &programRef{},
 	}
@@ -200,7 +164,7 @@ type programRef struct {
 }
 
 // SetProgram sets the tea.Program reference needed for streaming tool call events.
-func (m Model) SetProgram(p *tea.Program) {
+func (m *Model) SetProgram(p *tea.Program) {
 	m.programRef.p = p
 }
 

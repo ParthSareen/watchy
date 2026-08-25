@@ -26,6 +26,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if m.width == 0 || m.height == 0 {
 		return m, nil
 	}
+	// Ignore mouse events while a full-screen overlay is open so clicks don't
+	// select tasks or switch panes behind it.
+	if m.showHelp || m.modelPicker || m.showTaskDetails {
+		return m, nil
+	}
 
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
@@ -76,19 +81,19 @@ func (m Model) handleMouseWheel(msg tea.MouseMsg, delta int) (Model, tea.Cmd) {
 }
 
 func (m Model) handleMouseHorizontalWheel(msg tea.MouseMsg, delta int) (Model, tea.Cmd) {
-	if m.mouseRegionAt(msg.X, msg.Y) != mouseRegionLogs || m.rawLogContent == "" {
+	if m.mouseRegionAt(msg.X, msg.Y) != mouseRegionLogs || m.logs.rawLogContent == "" {
 		return m, nil
 	}
 	m.setFocus(focusLogs)
-	m.logXOffset += delta
-	if m.logXOffset < 0 {
-		m.logXOffset = 0
+	m.logs.logXOffset += delta
+	if m.logs.logXOffset < 0 {
+		m.logs.logXOffset = 0
 	}
 	maxOffset := m.maxLogXOffset()
-	if m.logXOffset > maxOffset {
-		m.logXOffset = maxOffset
+	if m.logs.logXOffset > maxOffset {
+		m.logs.logXOffset = maxOffset
 	}
-	m.refreshLogContent()
+	m.logs.refreshLogContent()
 	return m, nil
 }
 
@@ -105,21 +110,25 @@ func (m Model) handleTaskClick(y int) (Model, tea.Cmd) {
 	}
 
 	m.selectedIdx = idx
-	m.cursorLine = 0
-	m.visualMode = false
+	m.logs.cursorLine = 0
+	m.logs.visualMode = false
 	if m.rightMode == modeChat {
 		m.rightMode = modeLog
 		m.recalcLayout()
 		m.setFocus(focusTasks)
 	}
 	if m.rightMode == modeLog || m.rightMode == modeSplit {
-		return m, tea.Batch(cmd, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID, m.showLogNoise))
+		vis := m.visibleTasks()
+		if len(vis) > 0 && m.selectedIdx < len(vis) {
+			return m, tea.Batch(cmd, fetchLogs(m.mgr, vis[m.selectedIdx].ID, m.logs.showLogNoise))
+		}
 	}
 	return m, cmd
 }
 
 func (m Model) scrollTasks(delta int) (Model, tea.Cmd) {
-	if len(m.tasks) == 0 {
+	vis := m.visibleTasks()
+	if len(vis) == 0 {
 		return m, nil
 	}
 	m.setFocus(focusTasks)
@@ -128,52 +137,52 @@ func (m Model) scrollTasks(delta int) (Model, tea.Cmd) {
 	if m.selectedIdx < 0 {
 		m.selectedIdx = 0
 	}
-	if m.selectedIdx >= len(m.tasks) {
-		m.selectedIdx = len(m.tasks) - 1
+	if m.selectedIdx >= len(vis) {
+		m.selectedIdx = len(vis) - 1
 	}
 
 	if m.rightMode == modeLog || m.rightMode == modeSplit {
-		return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID, m.showLogNoise)
+		return m, fetchLogs(m.mgr, vis[m.selectedIdx].ID, m.logs.showLogNoise)
 	}
 	return m, nil
 }
 
 func (m *Model) scrollLogs(delta int) {
-	if m.rawLogContent == "" {
+	if m.logs.rawLogContent == "" {
 		return
 	}
 	m.setFocus(focusLogs)
-	totalLines := m.totalLogLines()
+	totalLines := m.logs.totalLogLines()
 	if totalLines <= 0 {
 		return
 	}
 
-	m.cursorLine += delta
-	if m.cursorLine < 0 {
-		m.cursorLine = 0
+	m.logs.cursorLine += delta
+	if m.logs.cursorLine < 0 {
+		m.logs.cursorLine = 0
 	}
-	if m.cursorLine >= totalLines {
-		m.cursorLine = totalLines - 1
+	if m.logs.cursorLine >= totalLines {
+		m.logs.cursorLine = totalLines - 1
 	}
-	m.refreshLogContent()
+	m.logs.refreshLogContent()
 
-	if m.cursorLine < m.logViewport.YOffset {
-		m.logViewport.SetYOffset(m.cursorLine)
-	} else if m.cursorLine >= m.logViewport.YOffset+m.logViewport.Height {
-		m.logViewport.SetYOffset(m.cursorLine - m.logViewport.Height + 1)
+	if m.logs.cursorLine < m.logs.logViewport.YOffset {
+		m.logs.logViewport.SetYOffset(m.logs.cursorLine)
+	} else if m.logs.cursorLine >= m.logs.logViewport.YOffset+m.logs.logViewport.Height {
+		m.logs.logViewport.SetYOffset(m.logs.cursorLine - m.logs.logViewport.Height + 1)
 	}
 }
 
 func (m *Model) moveLogCursorToMouse(y int) {
-	if m.rawLogContent == "" {
+	if m.logs.rawLogContent == "" {
 		return
 	}
 	rect, ok := m.paneRect(paneRight)
 	if !ok {
 		return
 	}
-	line := m.logViewport.YOffset + y - rect.contentY()
-	totalLines := m.totalLogLines()
+	line := m.logs.logViewport.YOffset + y - rect.contentY()
+	totalLines := m.logs.totalLogLines()
 	if totalLines <= 0 {
 		return
 	}
@@ -183,8 +192,8 @@ func (m *Model) moveLogCursorToMouse(y int) {
 	if line >= totalLines {
 		line = totalLines - 1
 	}
-	m.cursorLine = line
-	m.refreshLogContent()
+	m.logs.cursorLine = line
+	m.logs.refreshLogContent()
 }
 
 func (m Model) mouseRegionAt(x, y int) mouseRegion {
@@ -212,9 +221,9 @@ func (m Model) mouseInChatInput(y int) bool {
 }
 
 func (m Model) maxLogXOffset() int {
-	maxLen := m.maxLineLength()
-	lineNumWidth := lenInt(m.totalLogLines())
-	contentWidth := m.logViewport.Width - lineNumWidth - 3
+	maxLen := m.logs.maxLineLength()
+	lineNumWidth := lenInt(m.logs.totalLogLines())
+	contentWidth := m.logs.logViewport.Width - lineNumWidth - 3
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -223,18 +232,6 @@ func (m Model) maxLogXOffset() int {
 		return 0
 	}
 	return maxOffset
-}
-
-func lenInt(n int) int {
-	if n < 10 {
-		return 1
-	}
-	width := 0
-	for n > 0 {
-		width++
-		n /= 10
-	}
-	return width
 }
 
 func (m Model) paneRect(p pane) (paneRect, bool) {

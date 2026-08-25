@@ -153,11 +153,11 @@ func (m Model) renderModelPicker() string {
 
 func (m Model) renderHelp() string {
 	sections := []string{
-		"Navigation\n  tab / shift+tab  focus visible panes\n  l / c / s          logs, chat, or split view\n  h                  hide or show tasks\n  enter              open task, toggle sidebar, or compose\n  esc                leave the current mode",
-		"Tasks\n  j/k or ↑/↓         select task\n  x                  stop selected running task\n  r                  restart selected finished task",
-		"Logs\n  j/k, g/G           move or jump\n  /, n/N             search and move matches\n  v, y               select and copy\n  </>                horizontal scroll\n  u                  show or hide routine noise",
-		"Chat\n  i / enter          focus composer\n  ctrl+j             newline\n  esc                blur or cancel request\n  e / y              expand or copy latest tool",
-		"General\n  M                  choose Ollama model\n  t / m              theme and light/dark mode\n  ?                  close this help\n  q                  quit",
+		"Navigation\n  tab / shift+tab  focus visible panes\n  l / c / s          logs, chat, or split view\n  [ / ]              cycle logs, chat, and split views\n  h                  hide or show tasks\n  enter              open task, toggle sidebar, or compose\n  esc                leave the current mode",
+		"Tasks\n  j/k or ↑/↓         select task\n  f                  show running tasks only\n  x                  stop selected running task\n  r                  restart selected finished task\n  d                  show full task details",
+		"Logs\n  j/k, g/G           move or jump (5j moves 5 lines)\n  :                  jump to a line number\n  /, n/N             search and move matches\n  v, y               select and copy\n  </> 0 ^            horizontal scroll and home\n  u                  show or hide routine noise",
+		"Chat\n  i / enter          focus composer\n  ctrl+left          switch to logs from composer\n  ctrl+j             newline\n  esc                blur or cancel request\n  e / y              expand or copy latest tool",
+		"General\n  M                  choose Ollama model\n  t / m              theme and light/dark mode\n  ?                  close this help\n  q / ctrl+c         quit",
 	}
 	content := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -169,10 +169,11 @@ func (m Model) renderHelp() string {
 }
 
 func (m Model) renderTaskDetails() string {
-	if len(m.tasks) == 0 || m.selectedIdx >= len(m.tasks) {
+	vis := m.visibleTasks()
+	if len(vis) == 0 || m.selectedIdx >= len(vis) {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, "No task selected")
 	}
-	task := m.tasks[m.selectedIdx]
+	task := vis[m.selectedIdx]
 	end := "running"
 	if task.EndTime != nil {
 		end = task.EndTime.Format("2006-01-02 15:04:05")
@@ -217,20 +218,6 @@ func (m Model) dimText(text string) string {
 
 func (m Model) errorText(text string) string {
 	return lipgloss.NewStyle().Foreground(m.errorColorForMode()).Render(text)
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func (m Model) viewTabs() string {

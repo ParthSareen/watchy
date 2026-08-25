@@ -32,7 +32,11 @@ watchy run 'make serve'             # same as watchy start
 watchy start 'npm test' --name ci   # start with a custom name
 watchy stop 3                       # stop task 3
 watchy list                         # list all tasks
+watchy list --json                  # list tasks as JSON (scriptable)
+watchy info 3                       # show details for task 3
+watchy info 3 --json                # task details as JSON
 watchy logs 3 -n 100                # last 100 lines of task 3
+watchy restart 3                    # restart a stopped/crashed task
 watchy ask 3 "any errors?"          # ask the agent about task 3
 watchy cleanup                      # remove old finished tasks
 ```
@@ -66,13 +70,19 @@ l            show logs for selected task
 /            search in logs
 n            next search match
 N            previous search match
+:            jump to a line number
+0 ^         scroll horizontally to start of line
+< >         scroll horizontally left / right
 u            show/hide routine Ollama serve noise
 v            toggle visual mode (select lines with cursor)
 y            copy to clipboard (selection in visual mode, or all logs)
 ```
 
+A count prefix works for motion keys: `5j` moves down 5 lines, `10k` up 10.
+
 ### Tasks
 ```
+f            show running tasks only
 x            stop selected task
 r            restart stopped/crashed task
 d            show full task details, command, and working directory
@@ -113,13 +123,19 @@ ctrl+c       quit (works even in chat input)
 
 ## Agent tools
 
-The agent has access to:
+The interactive chat agent has access to:
 
 - `read_file` -- read any file by path
-- `bash_command` -- run read-only shell commands (grep, tail, head, awk, sed, wc, cat, sort, uniq, cut)
-- `get_task_info` -- get task metadata
-- `start_task` -- start a new background task
+- `bash_command` -- run read-only shell commands (grep, tail, head, awk, sed, wc, cat, sort, uniq, cut, ls, find, ps, lsof, curl, dig, ping, and other read-only utilities; pipes supported)
+- `list_tasks` -- list all current tasks (refreshes the agent's view after starting or stopping)
+- `get_task_info` -- get task metadata including working directory, exit code, and log path
+- `start_task` -- start a new background task (optional `workdir`)
 - `stop_task` -- stop a running task
+- `restart_task` -- restart a stopped or crashed task
+
+`watchy ask` is read-only: it can read files, run bash commands, list tasks, and
+get task info, but cannot start, stop, or restart tasks. Use the interactive
+chat (or the CLI) to mutate task state.
 
 Ask it things like "start a web server on port 8080", "are there any errors in task 2?", or "grep for panics across all logs".
 

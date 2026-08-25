@@ -74,20 +74,22 @@ func TestTaskRefreshErrorPreservesExistingTasks(t *testing.T) {
 
 func TestSearchUsesRawTextAndCanonicalVisibleLines(t *testing.T) {
 	model := Model{
-		searchTerm:        "error",
-		allRawLogContent:  "ok\nERROR one\nok\nerror two",
-		allLogContent:     "ok\n\x1b[31mERROR one\x1b[0m\nok\n\x1b[31merror two\x1b[0m",
-		allLogLineNumbers: []int{10, 11, 12, 13},
-		logViewport:       viewport.New(80, 20),
+		logs: logsModel{
+			searchTerm:        "error",
+			allRawLogContent:  "ok\nERROR one\nok\nerror two",
+			allLogContent:     "ok\n\x1b[31mERROR one\x1b[0m\nok\n\x1b[31merror two\x1b[0m",
+			allLogLineNumbers: []int{10, 11, 12, 13},
+			logViewport:       viewport.New(80, 20),
+		},
 	}
-	model.applySearchFilter()
-	if model.rawLogContent != "ERROR one\nerror two" {
-		t.Fatalf("rawLogContent = %q", model.rawLogContent)
+	model.logs.applySearchFilter()
+	if model.logs.rawLogContent != "ERROR one\nerror two" {
+		t.Fatalf("rawLogContent = %q", model.logs.rawLogContent)
 	}
-	if len(model.logLineNumbers) != 2 || model.logLineNumbers[0] != 11 || model.logLineNumbers[1] != 13 {
-		t.Fatalf("line numbers = %v", model.logLineNumbers)
+	if len(model.logs.logLineNumbers) != 2 || model.logs.logLineNumbers[0] != 11 || model.logs.logLineNumbers[1] != 13 {
+		t.Fatalf("line numbers = %v", model.logs.logLineNumbers)
 	}
-	if model.totalLogLines() != 2 {
-		t.Fatalf("totalLogLines = %d", model.totalLogLines())
+	if model.logs.totalLogLines() != 2 {
+		t.Fatalf("totalLogLines = %d", model.logs.totalLogLines())
 	}
 }
