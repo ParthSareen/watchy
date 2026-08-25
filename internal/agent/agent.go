@@ -323,7 +323,7 @@ func (a *Agent) Ask(taskID int, question string) (string, error) {
 	}
 
 	systemPrompt := fmt.Sprintf(`You are a helpful assistant analyzing logs for background tasks.
-You have access to tools to read files, execute bash commands, and get task information.
+You have access to read-only tools to read files, execute bash commands, get task information, and list tasks.
 
 All tasks:
 %s
@@ -340,7 +340,7 @@ Be concise and helpful in your responses.`,
 		{Role: "user", Content: question},
 	}
 
-	tools := GetTools()
+	tools := GetReadOnlyTools()
 
 	for {
 		stream := false

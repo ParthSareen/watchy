@@ -116,9 +116,10 @@ func (m *Model) showRightMode(next mode) tea.Cmd {
 		}
 	}
 	m.recalcLayout()
-	if (next == modeLog || next == modeSplit) && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
-		m.logsLoading = m.originalLogContent == ""
-		return fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID, m.showLogNoise)
+	vis := m.visibleTasks()
+	if (next == modeLog || next == modeSplit) && len(vis) > 0 && m.selectedIdx < len(vis) {
+		m.logs.logsLoading = m.logs.originalLogContent == ""
+		return fetchLogs(m.mgr, vis[m.selectedIdx].ID, m.logs.showLogNoise)
 	}
 	return nil
 }

@@ -28,8 +28,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		cmds = append(cmds, tickEvery(2*time.Second))
 		cmds = append(cmds, fetchTasks(m.mgr))
-		if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) && (m.rightMode == modeLog || m.rightMode == modeSplit) {
-			cmds = append(cmds, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID, m.showLogNoise))
+		vis := m.visibleTasks()
+		if len(vis) > 0 && m.selectedIdx < len(vis) && (m.rightMode == modeLog || m.rightMode == modeSplit) {
+			cmds = append(cmds, fetchLogs(m.mgr, vis[m.selectedIdx].ID, m.logs.showLogNoise))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -41,7 +42,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tasksLoaded = true
 		m.tasks = msg.tasks
 		if m.pendingTaskID > 0 {
-			for i, task := range m.tasks {
+			for i, task := range m.visibleTasks() {
 				if int64(task.ID) == m.pendingTaskID {
 					m.selectedIdx = i
 					m.pendingTaskID = 0
@@ -49,67 +50,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if m.selectedIdx >= len(m.tasks) && len(m.tasks) > 0 {
-			m.selectedIdx = len(m.tasks) - 1
-		}
-		if len(m.tasks) == 0 {
-			m.selectedIdx = 0
-		}
+		m.clampSelection()
 		m.conversation.RefreshSystemPrompt()
-		if firstLoad && len(m.tasks) > 0 && (m.rightMode == modeLog || m.rightMode == modeSplit) {
-			m.logsLoading = true
-			return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID, m.showLogNoise)
+		if firstLoad {
+			vis := m.visibleTasks()
+			if len(vis) > 0 && (m.rightMode == modeLog || m.rightMode == modeSplit) {
+				m.logs.logsLoading = true
+				return m, fetchLogs(m.mgr, vis[m.selectedIdx].ID, m.logs.showLogNoise)
+			}
 		}
 		return m, nil
 
 	case logContentMsg:
-		if len(m.tasks) == 0 || m.selectedIdx >= len(m.tasks) || m.tasks[m.selectedIdx].ID != msg.taskID {
+		vis := m.visibleTasks()
+		if len(vis) == 0 || m.selectedIdx >= len(vis) || vis[m.selectedIdx].ID != msg.taskID {
 			return m, nil
 		}
-		m.logsLoading = false
+		m.logs.logsLoading = false
 		if msg.err != nil {
 			return m, m.setStatus("could not refresh logs: "+msg.err.Error(), true)
 		}
-		oldTotalLines := m.totalLogLines()
-		cursorAtBottom := oldTotalLines > 0 && m.cursorLine >= oldTotalLines-1
-		atBottom := m.logViewport.AtBottom()
-		offset := m.logViewport.YOffset
-
-		m.allRawLogContent = msg.visibleRaw
-		m.allLogContent = msg.colored
-		m.allLogLineNumbers = append(m.allLogLineNumbers[:0], msg.lineNumbers...)
-		m.hiddenLogNoise = msg.hiddenNoise
-
-		if m.searchTerm != "" {
-			m.applySearchFilter()
-		} else {
-			m.restoreAllLogs()
-			m.refreshLogContent()
-		}
-
-		newTotalLines := m.totalLogLines()
-		// Update cursor position
-		if newTotalLines == 0 {
-			m.cursorLine = 0
-		} else if cursorAtBottom {
-			// Keep cursor at bottom if it was at bottom
-			m.cursorLine = newTotalLines - 1
-		} else if m.cursorLine >= newTotalLines {
-			// Clamp cursor if content shrunk
-			m.cursorLine = newTotalLines - 1
-		}
-
-		// Exit visual mode when content changes (selection would be invalid)
-		if m.visualMode && oldTotalLines != newTotalLines {
-			m.visualMode = false
-		}
-
-		// Preserve scroll position when not at bottom
-		if atBottom {
-			m.logViewport.GotoBottom()
-		} else {
-			m.logViewport.SetYOffset(offset)
-		}
+		m.logs.SetContent(msg.colored, msg.visibleRaw, msg.lineNumbers, msg.hiddenNoise)
 		return m, nil
 
 	case spinner.TickMsg:
@@ -201,9 +162,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Pass to active components
-	if m.searchMode {
+	if m.logs.searchMode {
 		var cmd tea.Cmd
-		m.searchInput, cmd = m.searchInput.Update(msg)
+		m.logs.searchInput, cmd = m.logs.searchInput.Update(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -245,76 +206,81 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Search mode input handling
-	if m.searchMode {
+	if m.logs.searchMode {
 		switch key {
 		case "enter":
-			term := m.searchInput.Value()
-			m.searchMode = false
-			m.searchInput.Blur()
+			term := m.logs.searchInput.Value()
+			m.logs.searchMode = false
+			m.logs.searchInput.Blur()
 			if term != "" {
-				m.searchTerm = term
-				m.matchIndex = 0
-				m.applySearchFilter()
+				m.logs.searchTerm = term
+				m.logs.matchIndex = 0
+				m.logs.applySearchFilter()
 			}
 			return m, nil
 		case "esc":
-			m.searchMode = false
-			m.searchInput.Blur()
-			m.searchInput.SetValue("")
+			m.logs.searchMode = false
+			m.logs.searchInput.Blur()
+			m.logs.searchInput.SetValue("")
 			return m, nil
 		default:
 			var cmd tea.Cmd
-			m.searchInput, cmd = m.searchInput.Update(msg)
+			m.logs.searchInput, cmd = m.logs.searchInput.Update(msg)
 			return m, cmd
 		}
 	}
 
 	// Command mode input handling (for :<line_number>)
-	if m.commandMode {
+	if m.logs.commandMode {
 		switch key {
 		case "enter":
-			cmd := m.commandInput.Value()
-			m.commandMode = false
-			m.commandInput.Blur()
-			// Parse line number and jump to it
+			cmd := m.logs.commandInput.Value()
+			m.logs.commandMode = false
+			m.logs.commandInput.Blur()
 			var lineNum int
-			if n, err := fmt.Sscanf(cmd, "%d", &lineNum); err == nil && n == 1 {
-				// Convert to 0-indexed display line
-				targetDisplayLine := -1
-				for i, origLineNum := range m.logLineNumbers {
-					if origLineNum == lineNum {
-						targetDisplayLine = i
-						break
-					}
-					if origLineNum > lineNum {
-						// Line number is between available lines, go to previous line
-						targetDisplayLine = i - 1
-						if targetDisplayLine < 0 {
-							targetDisplayLine = 0
-						}
-						break
-					}
+			if n, err := fmt.Sscanf(cmd, "%d", &lineNum); err != nil || n != 1 {
+				return m, m.setStatus("invalid line number", true)
+			}
+			// Convert to 0-indexed display line
+			targetDisplayLine := -1
+			for i, origLineNum := range m.logs.logLineNumbers {
+				if origLineNum == lineNum {
+					targetDisplayLine = i
+					break
 				}
-				if targetDisplayLine >= 0 {
-					m.cursorLine = targetDisplayLine
-					m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
-					// Ensure cursor is visible
-					if m.cursorLine < m.logViewport.YOffset {
-						m.logViewport.SetYOffset(m.cursorLine)
-					} else if m.cursorLine >= m.logViewport.YOffset+m.logViewport.Height {
-						m.logViewport.SetYOffset(m.cursorLine - m.logViewport.Height + 1)
+				if origLineNum > lineNum {
+					// Line number is between available lines, go to previous line
+					targetDisplayLine = i - 1
+					if targetDisplayLine < 0 {
+						targetDisplayLine = 0
 					}
+					break
 				}
+			}
+			if targetDisplayLine < 0 {
+				last := 0
+				if len(m.logs.logLineNumbers) > 0 {
+					last = m.logs.logLineNumbers[len(m.logs.logLineNumbers)-1]
+				}
+				return m, m.setStatus(fmt.Sprintf("line %d not found (last: %d)", lineNum, last), true)
+			}
+			m.logs.cursorLine = targetDisplayLine
+			m.logs.refreshLogContent()
+			// Ensure cursor is visible
+			if m.logs.cursorLine < m.logs.logViewport.YOffset {
+				m.logs.logViewport.SetYOffset(m.logs.cursorLine)
+			} else if m.logs.cursorLine >= m.logs.logViewport.YOffset+m.logs.logViewport.Height {
+				m.logs.logViewport.SetYOffset(m.logs.cursorLine - m.logs.logViewport.Height + 1)
 			}
 			return m, nil
 		case "esc":
-			m.commandMode = false
-			m.commandInput.Blur()
-			m.commandInput.SetValue("")
+			m.logs.commandMode = false
+			m.logs.commandInput.Blur()
+			m.logs.commandInput.SetValue("")
 			return m, nil
 		default:
 			var cmd tea.Cmd
-			m.commandInput, cmd = m.commandInput.Update(msg)
+			m.logs.commandInput, cmd = m.logs.commandInput.Update(msg)
 			return m, cmd
 		}
 	}
@@ -429,9 +395,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "0":
 		// 0 without pending count = go to start of line (horizontal)
 		if m.pendingCount == 0 {
-			if m.logsFocused() && m.rawLogContent != "" {
-				m.logXOffset = 0
-				m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
+			if m.logsFocused() && m.logs.rawLogContent != "" {
+				m.logs.logXOffset = 0
+				m.logs.refreshLogContent()
 			}
 		} else {
 			// 0 as part of a number (e.g., "10j")
@@ -440,10 +406,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ":":
 		// Enter command mode to jump to a specific line
-		if m.logsFocused() && m.rawLogContent != "" {
-			m.commandMode = true
-			m.commandInput.SetValue("")
-			cmd := m.commandInput.Focus()
+		if m.logsFocused() && m.logs.rawLogContent != "" {
+			m.logs.commandMode = true
+			m.logs.commandInput.SetValue("")
+			cmd := m.logs.commandInput.Focus()
 			return m, cmd
 		}
 	case "j", "down":
@@ -452,26 +418,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			count = 1
 		}
 		m.pendingCount = 0
-		if m.focusedArea == focusTasks && len(m.tasks) > 0 {
+		if m.focusedArea == focusTasks && len(m.visibleTasks()) > 0 {
+			vis := m.visibleTasks()
 			m.selectedIdx += count
-			if m.selectedIdx >= len(m.tasks) {
-				m.selectedIdx = len(m.tasks) - 1
+			if m.selectedIdx >= len(vis) {
+				m.selectedIdx = len(vis) - 1
 			}
 			if m.rightMode == modeLog {
-				return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID, m.showLogNoise)
+				return m, fetchLogs(m.mgr, vis[m.selectedIdx].ID, m.logs.showLogNoise)
 			}
 		} else if m.logsFocused() {
-			totalLines := m.totalLogLines()
-			if totalLines > 0 && m.cursorLine < totalLines-1 {
-				m.cursorLine += count
-				if m.cursorLine >= totalLines {
-					m.cursorLine = totalLines - 1
+			totalLines := m.logs.totalLogLines()
+			if totalLines > 0 && m.logs.cursorLine < totalLines-1 {
+				m.logs.cursorLine += count
+				if m.logs.cursorLine >= totalLines {
+					m.logs.cursorLine = totalLines - 1
 				}
 				// Set content first
-				m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
+				m.logs.refreshLogContent()
 				// Ensure cursor is visible
-				if m.cursorLine >= m.logViewport.YOffset+m.logViewport.Height {
-					m.logViewport.SetYOffset(m.cursorLine - m.logViewport.Height + 1)
+				if m.logs.cursorLine >= m.logs.logViewport.YOffset+m.logs.logViewport.Height {
+					m.logs.logViewport.SetYOffset(m.logs.cursorLine - m.logs.logViewport.Height + 1)
 				}
 			}
 		} else if m.chatViewFocused() {
@@ -483,25 +450,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			count = 1
 		}
 		m.pendingCount = 0
-		if m.focusedArea == focusTasks && len(m.tasks) > 0 {
+		if m.focusedArea == focusTasks && len(m.visibleTasks()) > 0 {
+			vis := m.visibleTasks()
 			m.selectedIdx -= count
 			if m.selectedIdx < 0 {
 				m.selectedIdx = 0
 			}
 			if m.rightMode == modeLog {
-				return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID, m.showLogNoise)
+				return m, fetchLogs(m.mgr, vis[m.selectedIdx].ID, m.logs.showLogNoise)
 			}
 		} else if m.logsFocused() {
-			if m.cursorLine > 0 {
-				m.cursorLine -= count
-				if m.cursorLine < 0 {
-					m.cursorLine = 0
+			if m.logs.cursorLine > 0 {
+				m.logs.cursorLine -= count
+				if m.logs.cursorLine < 0 {
+					m.logs.cursorLine = 0
 				}
 				// Set content first
-				m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
+				m.logs.refreshLogContent()
 				// Ensure cursor is visible
-				if m.cursorLine < m.logViewport.YOffset {
-					m.logViewport.SetYOffset(m.cursorLine)
+				if m.logs.cursorLine < m.logs.logViewport.YOffset {
+					m.logs.logViewport.SetYOffset(m.logs.cursorLine)
 				}
 			}
 		} else if m.chatViewFocused() {
@@ -509,36 +477,36 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "g":
 		if m.logsFocused() {
-			m.cursorLine = 0
-			m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
-			m.logViewport.GotoTop()
+			m.logs.cursorLine = 0
+			m.logs.refreshLogContent()
+			m.logs.logViewport.GotoTop()
 		} else if m.chatViewFocused() {
 			m.chat.GotoTop()
 		}
 	case "G":
 		if m.logsFocused() {
-			totalLines := m.totalLogLines()
+			totalLines := m.logs.totalLogLines()
 			if totalLines > 0 {
-				m.cursorLine = totalLines - 1
+				m.logs.cursorLine = totalLines - 1
 			}
-			m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
-			m.logViewport.GotoBottom()
+			m.logs.refreshLogContent()
+			m.logs.logViewport.GotoBottom()
 		} else if m.chatViewFocused() {
 			m.chat.GotoBottom()
 		}
 	case "^":
 		// Scroll horizontally to start of line
-		if m.logsFocused() && m.rawLogContent != "" {
-			m.logXOffset = 0
-			m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
+		if m.logsFocused() && m.logs.rawLogContent != "" {
+			m.logs.logXOffset = 0
+			m.logs.refreshLogContent()
 		}
 	case ">":
 		// Scroll right by 20 chars
-		if m.logsFocused() && m.rawLogContent != "" {
-			maxLen := m.maxLineLength()
-			lineNumWidth := len(fmt.Sprintf("%d", m.totalLogLines()))
+		if m.logsFocused() && m.logs.rawLogContent != "" {
+			maxLen := m.logs.maxLineLength()
+			lineNumWidth := len(fmt.Sprintf("%d", m.logs.totalLogLines()))
 			prefixWidth := lineNumWidth + 3
-			contentWidth := m.logViewport.Width - prefixWidth
+			contentWidth := m.logs.logViewport.Width - prefixWidth
 			if contentWidth <= 0 {
 				contentWidth = 80
 			}
@@ -546,21 +514,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if maxOffset < 0 {
 				maxOffset = 0
 			}
-			m.logXOffset += 20
-			if m.logXOffset > maxOffset {
-				m.logXOffset = maxOffset
+			m.logs.logXOffset += 20
+			if m.logs.logXOffset > maxOffset {
+				m.logs.logXOffset = maxOffset
 			}
-			m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
+			m.logs.refreshLogContent()
 		}
 	case "<":
 		// Scroll left by 20 chars
-		if m.logsFocused() && m.rawLogContent != "" {
-			if m.logXOffset >= 20 {
-				m.logXOffset -= 20
+		if m.logsFocused() && m.logs.rawLogContent != "" {
+			if m.logs.logXOffset >= 20 {
+				m.logs.logXOffset -= 20
 			} else {
-				m.logXOffset = 0
+				m.logs.logXOffset = 0
 			}
-			m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
+			m.logs.refreshLogContent()
 		}
 	case "tab", "shift+tab":
 		return m, m.cycleFocus(key == "tab")
@@ -570,7 +538,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = true
 		return m, nil
 	case "d":
-		if m.focusedArea == focusTasks && len(m.tasks) > 0 {
+		if m.focusedArea == focusTasks && len(m.visibleTasks()) > 0 {
 			m.showTaskDetails = true
 		}
 		return m, nil
@@ -588,6 +556,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.syncChatPalette()
+		return m, m.setStatus("theme: "+themes[m.themeIdx].name, false)
 	case "m":
 		// Toggle manual light/dark mode.
 		m.lightMode = !m.lightMode
@@ -607,12 +576,33 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.syncChatPalette()
+		colorMode := "dark"
+		if m.lightMode {
+			colorMode = "light"
+		}
+		return m, m.setStatus("color mode: "+colorMode, false)
 	case "u":
 		if m.logsFocused() {
-			m.showLogNoise = !m.showLogNoise
-			if len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
-				return m, fetchLogs(m.mgr, m.tasks[m.selectedIdx].ID, m.showLogNoise)
+			m.logs.showLogNoise = !m.logs.showLogNoise
+			noiseMsg := "noise shown"
+			if !m.logs.showLogNoise {
+				noiseMsg = "noise hidden"
 			}
+			vis := m.visibleTasks()
+			if len(vis) > 0 && m.selectedIdx < len(vis) {
+				return m, tea.Batch(fetchLogs(m.mgr, vis[m.selectedIdx].ID, m.logs.showLogNoise), m.setStatus(noiseMsg, false))
+			}
+			return m, m.setStatus(noiseMsg, false)
+		}
+	case "f":
+		// Toggle running-only filter in the task sidebar
+		if m.focusedArea == focusTasks {
+			m.filterRunning = !m.filterRunning
+			m.clampSelection()
+			if m.filterRunning {
+				return m, m.setStatus("filter: running only", false)
+			}
+			return m, m.setStatus("filter: off", false)
 		}
 	case "h":
 		m.toggleTaskSidebar()
@@ -626,7 +616,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.showRightMode(modeSplit)
 	case "enter":
-		if m.focusedArea == focusTasks && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
+		if m.focusedArea == focusTasks && len(m.visibleTasks()) > 0 && m.selectedIdx < len(m.visibleTasks()) {
 			// Open logs for selected task
 			return m, m.showRightMode(modeLog)
 		} else if m.logsFocused() && m.rightMode == modeLog {
@@ -645,42 +635,54 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "x":
-		if m.focusedArea == focusTasks && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
-			t := m.tasks[m.selectedIdx]
-			if t.Status == "running" {
-				return m, stopTask(m.mgr, t.ID)
-			}
+		if m.focusedArea != focusTasks {
+			return m, m.setStatus("focus the task list (tab)", true)
 		}
+		vis := m.visibleTasks()
+		if len(vis) == 0 || m.selectedIdx >= len(vis) {
+			return m, nil
+		}
+		t := vis[m.selectedIdx]
+		if t.Status != "running" {
+			return m, m.setStatus(fmt.Sprintf("task %d isn't running", t.ID), true)
+		}
+		return m, stopTask(m.mgr, t.ID)
 	case "r":
-		if m.focusedArea == focusTasks && len(m.tasks) > 0 && m.selectedIdx < len(m.tasks) {
-			t := m.tasks[m.selectedIdx]
-			if t.Status == "stopped" || t.Status == "crashed" {
-				return m, restartTaskCmd(m.mgr, t.ID)
-			}
+		if m.focusedArea != focusTasks {
+			return m, m.setStatus("focus the task list (tab)", true)
 		}
+		vis := m.visibleTasks()
+		if len(vis) == 0 || m.selectedIdx >= len(vis) {
+			return m, nil
+		}
+		t := vis[m.selectedIdx]
+		if t.Status != "stopped" && t.Status != "crashed" {
+			return m, m.setStatus(fmt.Sprintf("task %d is running", t.ID), true)
+		}
+		return m, restartTaskCmd(m.mgr, t.ID)
 	case "v":
-		if m.logsFocused() && m.rawLogContent != "" {
-			m.visualMode = !m.visualMode
-			if m.visualMode {
+		if m.logsFocused() && m.logs.rawLogContent != "" {
+			m.logs.visualMode = !m.logs.visualMode
+			if m.logs.visualMode {
 				// Start visual selection at cursor position
-				m.visualStart = m.cursorLine
+				m.logs.visualStart = m.logs.cursorLine
 			}
-			m.refreshLogContent()
+			m.logs.refreshLogContent()
 			return m, nil
 		}
 	case "y":
-		if m.logsFocused() && m.rawLogContent != "" {
-			if m.visualMode {
+		if m.logsFocused() && m.logs.rawLogContent != "" {
+			if m.logs.visualMode {
 				// Copy selected lines
-				selected := m.getSelectedLines()
-				m.visualMode = false
-				m.refreshLogContent()
+				selected := m.logs.getSelectedLines()
+				m.logs.visualMode = false
+				m.logs.refreshLogContent()
 				if selected != "" {
 					return m, copyToClipboard(selected)
 				}
 				return m, nil
 			}
-			return m, copyToClipboard(m.rawLogContent)
+			return m, copyToClipboard(m.logs.rawLogContent)
 		}
 		if m.chatViewFocused() {
 			if text := m.chat.LastToolText(); text != "" {
@@ -689,37 +691,46 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "/":
 		if m.logsFocused() {
-			m.searchMode = true
-			m.searchInput.SetValue("")
-			cmd := m.searchInput.Focus()
+			m.logs.searchMode = true
+			m.logs.searchInput.SetValue("")
+			cmd := m.logs.searchInput.Focus()
 			return m, cmd
 		}
 	case "n":
-		if m.logsFocused() && m.searchTerm != "" && len(m.searchMatches) > 0 {
-			m.matchIndex = (m.matchIndex + 1) % len(m.searchMatches)
-			m.scrollToMatch()
-		}
-	case "N":
-		if m.logsFocused() && m.searchTerm != "" && len(m.searchMatches) > 0 {
-			m.matchIndex--
-			if m.matchIndex < 0 {
-				m.matchIndex = len(m.searchMatches) - 1
-			}
-			m.scrollToMatch()
-		}
-	case "esc":
-		if m.visualMode {
-			m.visualMode = false
-			m.refreshLogContent()
+		if !m.logsFocused() {
 			return m, nil
 		}
-		if m.searchTerm != "" {
-			m.searchTerm = ""
-			m.searchMatches = nil
-			m.searchMatchLines = nil
-			m.matchIndex = 0
-			m.restoreAllLogs()
-			m.refreshLogContent()
+		if m.logs.searchTerm == "" || len(m.logs.searchMatches) == 0 {
+			return m, m.setStatus("no active search", true)
+		}
+		m.logs.matchIndex = (m.logs.matchIndex + 1) % len(m.logs.searchMatches)
+		m.logs.scrollToMatch()
+	case "N":
+		if !m.logsFocused() {
+			return m, nil
+		}
+		if m.logs.searchTerm == "" || len(m.logs.searchMatches) == 0 {
+			return m, m.setStatus("no active search", true)
+		}
+		m.logs.matchIndex--
+		if m.logs.matchIndex < 0 {
+			m.logs.matchIndex = len(m.logs.searchMatches) - 1
+		}
+		m.logs.scrollToMatch()
+	case "esc":
+		m.pendingCount = 0
+		if m.logs.visualMode {
+			m.logs.visualMode = false
+			m.logs.refreshLogContent()
+			return m, nil
+		}
+		if m.logs.searchTerm != "" {
+			m.logs.searchTerm = ""
+			m.logs.searchMatches = nil
+			m.logs.searchMatchLines = nil
+			m.logs.matchIndex = 0
+			m.logs.restoreAllLogs()
+			m.logs.refreshLogContent()
 			return m, nil
 		}
 		if m.focusedArea == focusChatView {

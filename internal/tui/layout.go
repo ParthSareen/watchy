@@ -1,5 +1,7 @@
 package tui
 
+import "github.com/parth/watchy/internal/task"
+
 func (m *Model) recalcLayout() {
 	m.boxHeight = m.height - 1
 	if m.boxHeight < 0 {
@@ -23,13 +25,13 @@ func (m *Model) recalcLayout() {
 
 	if m.rightMode == modeSplit {
 		logWidth, chatWidth := m.splitPaneWidths()
-		m.logViewport.Width = logWidth
-		m.logViewport.Height = m.innerHeight
+		m.logs.logViewport.Width = logWidth
+		m.logs.logViewport.Height = m.innerHeight
 		m.chat.SetSize(chatWidth, m.innerHeight)
 		return
 	}
-	m.logViewport.Width = m.rightWidth
-	m.logViewport.Height = m.innerHeight
+	m.logs.logViewport.Width = m.rightWidth
+	m.logs.logViewport.Height = m.innerHeight
 	m.chat.SetSize(m.rightWidth, m.innerHeight)
 }
 
@@ -42,8 +44,39 @@ func (m Model) splitPaneWidths() (int, int) {
 	return logWidth, available - logWidth
 }
 
+// visibleTasks returns the tasks currently shown in the sidebar. When the
+// running-only filter is active, non-running tasks are excluded.
+func (m Model) visibleTasks() []*task.Task {
+	if !m.filterRunning {
+		return m.tasks
+	}
+	out := make([]*task.Task, 0, len(m.tasks))
+	for _, t := range m.tasks {
+		if t.Status == "running" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// clampSelection keeps selectedIdx within the bounds of the visible task list.
+func (m *Model) clampSelection() {
+	vis := m.visibleTasks()
+	if len(vis) == 0 {
+		m.selectedIdx = 0
+		return
+	}
+	if m.selectedIdx < 0 {
+		m.selectedIdx = 0
+	}
+	if m.selectedIdx >= len(vis) {
+		m.selectedIdx = len(vis) - 1
+	}
+}
+
 func (m Model) taskWindow(height int) (int, int) {
-	if height <= 0 || len(m.tasks) == 0 {
+	vis := m.visibleTasks()
+	if height <= 0 || len(vis) == 0 {
 		return 0, 0
 	}
 
@@ -51,8 +84,8 @@ func (m Model) taskWindow(height int) (int, int) {
 	if selected < 0 {
 		selected = 0
 	}
-	if selected >= len(m.tasks) {
-		selected = len(m.tasks) - 1
+	if selected >= len(vis) {
+		selected = len(vis) - 1
 	}
 
 	start := 0
@@ -60,8 +93,8 @@ func (m Model) taskWindow(height int) (int, int) {
 		start = selected - height + 1
 	}
 	end := start + height
-	if end > len(m.tasks) {
-		end = len(m.tasks)
+	if end > len(vis) {
+		end = len(vis)
 		start = end - height
 		if start < 0 {
 			start = 0

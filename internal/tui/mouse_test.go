@@ -97,10 +97,10 @@ func TestMouseClickChatComposerFocusesInput(t *testing.T) {
 
 func TestMouseWheelOverLogsMovesCursor(t *testing.T) {
 	m := testMouseModel()
-	m.rawLogContent = "one\ntwo\nthree\nfour\nfive"
-	m.originalLogContent = m.rawLogContent
-	m.logLineNumbers = []int{1, 2, 3, 4, 5}
-	m.logViewport.SetContent(m.addLineNumbers(m.originalLogContent))
+	m.logs.rawLogContent = "one\ntwo\nthree\nfour\nfive"
+	m.logs.originalLogContent = m.logs.rawLogContent
+	m.logs.logLineNumbers = []int{1, 2, 3, 4, 5}
+	m.logs.logViewport.SetContent(m.logs.addLineNumbers(m.logs.originalLogContent))
 
 	updated, _ := m.handleMouse(tea.MouseMsg{
 		X:      m.leftWidth + 2,
@@ -112,8 +112,8 @@ func TestMouseWheelOverLogsMovesCursor(t *testing.T) {
 	if updated.focusedArea != focusLogs {
 		t.Fatalf("focusedArea = %v, want focusLogs", updated.focusedArea)
 	}
-	if updated.cursorLine != mouseWheelStep {
-		t.Fatalf("cursorLine = %d, want %d", updated.cursorLine, mouseWheelStep)
+	if updated.logs.cursorLine != mouseWheelStep {
+		t.Fatalf("cursorLine = %d, want %d", updated.logs.cursorLine, mouseWheelStep)
 	}
 }
 
@@ -143,6 +143,41 @@ func TestMousePaneRectsMatchRenderedBoundaries(t *testing.T) {
 	}
 	if m.mouseRegionAt(rightRect.x, 1) != mouseRegionLogs {
 		t.Fatal("right pane start should be logs")
+	}
+}
+
+func TestMouseIgnoredWhileOverlayOpen(t *testing.T) {
+	for _, overlay := range []struct {
+		name  string
+		setup func(m *Model)
+	}{
+		{"help", func(m *Model) { m.showHelp = true }},
+		{"model picker", func(m *Model) { m.modelPicker = true }},
+		{"task details", func(m *Model) { m.showTaskDetails = true }},
+	} {
+		t.Run(overlay.name, func(t *testing.T) {
+			m := testMouseModel()
+			m.rightMode = modeChat
+			overlay.setup(&m)
+			origIdx := m.selectedIdx
+			origFocus := m.focusedArea
+
+			updated, _ := m.handleMouse(tea.MouseMsg{
+				X:      2,
+				Y:      3,
+				Button: tea.MouseButtonLeft,
+				Action: tea.MouseActionPress,
+			})
+			if updated.selectedIdx != origIdx {
+				t.Fatalf("selectedIdx changed behind %s overlay: %d -> %d", overlay.name, origIdx, updated.selectedIdx)
+			}
+			if updated.focusedArea != origFocus {
+				t.Fatalf("focus changed behind %s overlay: %v -> %v", overlay.name, origFocus, updated.focusedArea)
+			}
+			if updated.rightMode != modeChat {
+				t.Fatalf("rightMode changed behind %s overlay: %v -> %v", overlay.name, modeChat, updated.rightMode)
+			}
+		})
 	}
 }
 

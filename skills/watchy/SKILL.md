@@ -10,7 +10,7 @@ Use Watchy to keep long-running processes alive and make their logs easy to insp
 ## Start a process
 
 1. Confirm `watchy` is installed with `command -v watchy`.
-2. Run `watchy list` and check the requested port when applicable. Do not start an obvious duplicate.
+2. Run `watchy list` and check the requested port when applicable. Do not start an obvious duplicate. For parseable state in a tool call, use `watchy list --json` or `watchy info <id> --json` (fields include `command`, `work_dir`, `status`, `pid`, `log_path`, and `exit_code`).
 3. Launch Watchy from the directory in which the child command must run. Set the execution tool's `workdir`; Watchy passes its working directory to the child.
 4. Use a short, specific name:
 
@@ -38,9 +38,17 @@ Use bounded log reads by default:
 watchy logs <id> -n 100
 ```
 
-Poll `watchy list` and logs at useful intervals for longer startups. If a task crashes, report its status and the relevant log tail. Do not restart it repeatedly without understanding the failure.
+Poll `watchy list` and logs at useful intervals for longer startups. If a task crashes, report its status and the relevant log tail (and the exit code from `watchy info <id>` when useful). Do not restart it repeatedly without understanding the failure.
 
-Use `watchy ask <id> "<question>"` only when model-assisted log analysis is useful. Do not add `--online` or change the model unless the user requests that mode.
+To restart a stopped or crashed task once the failure is understood:
+
+```bash
+watchy restart <id>
+```
+
+This starts a new task (new ID) with the same command and working directory; capture the new ID from the output.
+
+Use `watchy ask <id> "<question>"` only when model-assisted log analysis is useful. `ask` is read-only (it cannot start, stop, or restart tasks) and times out after 30 seconds; it prints `Asking agent…` to stdout before the answer, so capture the answer from the lines that follow. Do not add `--online` or change the model unless the user requests that mode.
 
 ## Stop a process
 
@@ -66,7 +74,8 @@ Never use bare `watchy stop`; it stops the latest task, which might be unrelated
 Report:
 
 - task ID and name;
-- running, stopped, or crashed status;
+- running, stopped, or crashed status (and exit code for crashed tasks);
 - working directory and command;
 - local URL or port, when applicable;
+- the task's log path under `~/.watchy/`;
 - `watchy logs <id> -n 100` as the follow-up command.

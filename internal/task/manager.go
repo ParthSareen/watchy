@@ -56,6 +56,21 @@ func (m *Manager) StartTask(name, command string) (int64, error) {
 	return m.startTaskInDir(name, command, workDir)
 }
 
+// StartTaskInDir starts a background task with an explicit working directory.
+func (m *Manager) StartTaskInDir(name, command, workDir string) (int64, error) {
+	return m.startTaskInDir(name, command, workDir)
+}
+
+// ExitCode returns the recorded exit status for a task's log path. The second
+// value is false when no exit status is available (e.g. the task is still running).
+func ExitCode(logPath string) (int, bool) {
+	code, err := readExitCode(taskExitPath(logPath))
+	if err != nil {
+		return 0, false
+	}
+	return code, true
+}
+
 func (m *Manager) startTaskInDir(name, command, workDir string) (int64, error) {
 	if strings.TrimSpace(command) == "" {
 		return 0, fmt.Errorf("empty command")
