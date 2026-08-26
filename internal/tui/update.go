@@ -23,7 +23,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.recalcLayout()
-		return m, nil
+		return m, tea.ClearScreen
 
 	case tickMsg:
 		cmds = append(cmds, tickEvery(2*time.Second))

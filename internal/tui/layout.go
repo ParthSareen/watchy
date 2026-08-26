@@ -3,7 +3,10 @@ package tui
 import "github.com/parth/watchy/internal/task"
 
 func (m *Model) recalcLayout() {
-	m.boxHeight = m.height - 1
+	// Leave the terminal's last row unused. Some terminal emulators scroll when
+	// a full-width footer reaches the bottom-right cell, which leaves fragments
+	// of earlier frames behind during spinner updates and resizes.
+	m.boxHeight = m.height - 2
 	if m.boxHeight < 0 {
 		m.boxHeight = 0
 	}

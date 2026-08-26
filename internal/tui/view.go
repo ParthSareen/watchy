@@ -135,8 +135,8 @@ func (m Model) renderTaskList(width, height int) string {
 
 		name := task.Name
 		maxName := width - 15
-		if maxName < 10 {
-			maxName = 10
+		if maxName < 0 {
+			maxName = 0
 		}
 		name = truncateRunes(name, maxName)
 

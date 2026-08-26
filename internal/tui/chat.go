@@ -174,6 +174,7 @@ func (c *chatModel) SetSize(width, height int) {
 	c.width = width
 	c.height = height
 	c.input.SetWidth(width)
+	c.help.Width = width
 
 	inputHeight := 3
 	helpHeight := 1
@@ -196,7 +197,7 @@ func (c chatModel) View(inputFocused bool) string {
 
 	helpText := c.help.View(c.keys)
 	if !inputFocused {
-		helpText = c.mutedStyle().Render("j/k scroll  i compose  e expand last tool  y copy tool  enter compose")
+		helpText = c.mutedStyle().Render(truncateRunes("j/k scroll  i compose  e expand last tool  y copy tool  enter compose", c.width))
 	}
 	parts = append(parts, helpText)
 	return strings.Join(parts, "\n")

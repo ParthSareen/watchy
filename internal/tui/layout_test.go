@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/parth/watchy/internal/task"
 )
 
@@ -18,7 +19,7 @@ func TestRunningFilterHidesNonRunningTasks(t *testing.T) {
 		{ID: 4, Name: "delta", Status: "crashed"},
 	}
 	m := Model{
-		width:         60,
+		width:         80,
 		height:        20,
 		rightMode:     modeLog,
 		focusedArea:   focusTasks,
@@ -103,8 +104,11 @@ func TestViewFitsTerminalWithLongTaskList(t *testing.T) {
 		height int
 		mode   mode
 	}{
+		{name: "logs narrow", width: 72, height: 18, mode: modeLog},
 		{name: "logs screenshot size", width: 128, height: 40, mode: modeLog},
 		{name: "logs short resize", width: 128, height: 16, mode: modeLog},
+		{name: "chat narrow and short", width: 72, height: 10, mode: modeChat},
+		{name: "chat wide", width: 160, height: 40, mode: modeChat},
 		{name: "split odd width", width: 127, height: 40, mode: modeSplit},
 		{name: "split short resize", width: 127, height: 16, mode: modeSplit},
 	}
@@ -123,13 +127,88 @@ func TestResizeKeepsSelectedTaskVisible(t *testing.T) {
 
 	for _, size := range []tea.WindowSizeMsg{
 		{Width: 128, Height: 16},
+		{Width: 72, Height: 10},
+		{Width: 160, Height: 40},
 		{Width: 151, Height: 31},
 	} {
-		updated, _ := m.Update(size)
+		updated, cmd := m.Update(size)
+		if cmd == nil {
+			t.Fatalf("resize to %dx%d did not request a full repaint", size.Width, size.Height)
+		}
 		m = updated.(Model)
 		assertViewFitsTerminal(t, m)
-		if !strings.Contains(m.View(), "task-30") {
+		taskRows := ansi.Strip(m.renderTaskList(m.leftWidth-2, m.innerHeight))
+		if !strings.Contains(taskRows, " 31 ") {
 			t.Fatalf("selected task is not visible after resize to %dx%d", size.Width, size.Height)
+		}
+	}
+}
+
+func TestBusyChatFrameHasSingleComposerAndStableFooter(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		width  int
+		height int
+		mode   mode
+	}{
+		{name: "narrow chat", width: 72, height: 12, mode: modeChat},
+		{name: "wide chat", width: 160, height: 40, mode: modeChat},
+		{name: "narrow split", width: 96, height: 12, mode: modeSplit},
+		{name: "wide split", width: 160, height: 40, mode: modeSplit},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := layoutTestModel(tt.width, tt.height, tt.mode, 6)
+			m.focusedArea = focusChatInput
+			m.chat.Focus()
+			m.chat.AppendMessage("user", "inspect the active task")
+			m.chat.SetBusy(true)
+			m.agentBusy = true
+
+			view := ansi.Strip(m.View())
+			if got := strings.Count(view, "Ask the agent..."); got != 1 {
+				t.Fatalf("composer count = %d, want 1:\n%s", got, view)
+			}
+			if got := strings.Count(view, "agent working"); got != 2 {
+				t.Fatalf("busy indicator count = %d, want chat and footer indicators:\n%s", got, view)
+			}
+
+			lines := strings.Split(view, "\n")
+			footer := ansi.Strip(m.renderStatusBar())
+			if got := strings.Count(view, footer); got != 1 {
+				t.Fatalf("footer count = %d, want 1:\n%s", got, view)
+			}
+			if lines[len(lines)-1] != footer {
+				t.Fatalf("last rendered row = %q, want footer %q", lines[len(lines)-1], footer)
+			}
+			assertViewFitsTerminal(t, m)
+		})
+	}
+}
+
+func TestTaskRowsRenderOnceWithMixedStates(t *testing.T) {
+	tasks := []*task.Task{
+		{ID: 41, Name: "active", Status: "running"},
+		{ID: 40, Name: "finished", Status: "stopped"},
+		{ID: 39, Name: "failed", Status: "crashed"},
+		{ID: 38, Name: "a-task-name-that-is-long-enough-to-truncate", Status: "stopped"},
+	}
+	m := Model{
+		width:       96,
+		height:      16,
+		rightMode:   modeChat,
+		focusedArea: focusTasks,
+		chat:        newChatModel(maxChatMessages),
+		tasks:       tasks,
+	}
+	m.recalcLayout()
+
+	rows := strings.Split(ansi.Strip(m.renderTaskList(m.leftWidth-2, m.innerHeight)), "\n")
+	if len(rows) != len(tasks) {
+		t.Fatalf("task row count = %d, want %d:\n%s", len(rows), len(tasks), strings.Join(rows, "\n"))
+	}
+	for _, id := range []string{"41", "40", "39", "38"} {
+		if got := strings.Count(strings.Join(rows, "\n"), id); got != 1 {
+			t.Fatalf("task %s count = %d, want 1:\n%s", id, got, strings.Join(rows, "\n"))
 		}
 	}
 }
@@ -211,8 +290,9 @@ func layoutTestModel(width, height int, rightMode mode, taskCount int) Model {
 func assertViewFitsTerminal(t *testing.T, m Model) {
 	t.Helper()
 	view := m.View()
-	if got := lipgloss.Height(view); got != m.height {
-		t.Fatalf("view height = %d, want terminal height %d", got, m.height)
+	wantHeight := maxInt(1, m.height-1)
+	if got := lipgloss.Height(view); got != wantHeight {
+		t.Fatalf("view height = %d, want %d with bottom guard row:\n%s", got, wantHeight, ansi.Strip(view))
 	}
 
 	lines := strings.Split(view, "\n")
